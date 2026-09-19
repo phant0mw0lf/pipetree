@@ -6,7 +6,7 @@ from pipetree.executor.retry import RetryPolicy, Throttled
 from pipetree.executor.runner import run_pipeline
 from pipetree.executor.status import TableStatus
 
-from .conftest import AlwaysFails, Capabilities, FakeAdapter, Flaky, make_graph
+from ..helpers import AlwaysFails, Capabilities, FakeAdapter, Flaky, make_graph
 
 FAST_RETRY = RetryPolicy(base_delay=0.001, max_delay=0.005)
 
