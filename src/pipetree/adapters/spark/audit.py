@@ -22,7 +22,7 @@ def insert_audit_values(
         "_updated_at": F.lit(now),
         "_is_deleted": F.lit(False),
         "_execution_id": F.lit(execution_id),
-        "_source_system": F.lit(source_system),
+        "_source_system": _source_system_value(source_system),
     }
 
 
@@ -32,8 +32,17 @@ def update_audit_values(
     return {
         "_updated_at": F.lit(now),
         "_execution_id": F.lit(execution_id),
-        "_source_system": F.lit(source_system),
+        "_source_system": _source_system_value(source_system),
     }
+
+
+def _source_system_value(source_system: str | None) -> Column:
+    # A logic-based table (no `source`) has no source system to stamp.
+    # Explicitly typed as string rather than left as a bare F.lit(None):
+    # an untyped NullType literal has tripped a Catalyst plan-reuse bug
+    # where a DataFrame used for both .count() and .write() lost the
+    # column between the two separately re-analyzed physical plans.
+    return F.lit(source_system).cast("string")
 
 
 def scd2_insert_audit_values(
