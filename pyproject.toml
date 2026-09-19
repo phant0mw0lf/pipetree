@@ -1,0 +1,59 @@
+[project]
+name = "pipetree"
+version = "0.1.0"
+description = "Metadata-driven pipeline orchestration: YAML in, a runnable dependency tree out."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "David Fengler", email = "info@davidfengler.de" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "click>=8.1",
+]
+
+[project.scripts]
+pipetree = "pipetree.cli:main"
+
+[project.optional-dependencies]
+spark = [
+    "pyspark[sql]>=4.0,<4.1",
+    "delta-spark>=4.0,<4.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "pyright>=1.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "spark: requires a JVM + PySpark session (skipped when unavailable)",
+]
+
+[tool.coverage.run]
+source = ["src/pipetree"]

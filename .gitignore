@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+htmlcov/
+dist/
+build/
+.venv/
+
+# Spark / Delta local run artifacts
+spark-warehouse/
+metastore_db/
+derby.log
+*.crc
+_delta_log/
+.checkpoints/
+
+# examples run output stays, but scratch runs don't
+examples/**/_output/
+
+.DS_Store
