@@ -13,6 +13,7 @@ needs a lock.
 
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
@@ -22,6 +23,8 @@ from pipetree.executor.retry import RetryPolicy, backoff_delay
 from pipetree.executor.status import RunDigest, TableResult, TableStatus
 from pipetree.graph.builder import Graph
 from pipetree.model import Table
+
+_logger = logging.getLogger("pipetree.executor")
 
 
 def run_pipeline(
@@ -89,6 +92,7 @@ def _mark_upstream_failed(
         if fqn in settled:
             continue
         settled.add(fqn)
+        _logger.warning("%s: upstream_failed (ancestor %s failed)", fqn, failed_fqn)
         results[fqn] = TableResult(
             table_fqn=fqn,
             status=TableStatus.UPSTREAM_FAILED,
@@ -107,6 +111,8 @@ def _run_with_retries(
     start_perf = time.perf_counter()
     attempts = 0
 
+    _logger.info("%s: starting", table.fqn)
+
     while True:
         attempts += 1
         try:
@@ -124,6 +130,13 @@ def _run_with_retries(
                     can_retry = False
 
             if not can_retry:
+                _logger.error(
+                    "%s: failed after %d attempt(s): %s: %s",
+                    table.fqn,
+                    attempts,
+                    type(exc).__name__,
+                    exc,
+                )
                 return _finish(
                     table.fqn,
                     TableStatus.FAILED,
@@ -134,11 +147,24 @@ def _run_with_retries(
                     error_message=str(exc),
                 )
 
-            time.sleep(backoff_delay(attempts, retry_policy))
+            delay = backoff_delay(attempts, retry_policy)
+            _logger.warning(
+                "%s: attempt %d failed (%s: %s), retrying in %.2fs",
+                table.fqn,
+                attempts,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
             continue
 
         status = TableStatus.SUCCEEDED if attempts == 1 else TableStatus.RETRIED_SUCCEEDED
-        return _finish(table.fqn, status, attempts, started_at, start_perf, details=details)
+        result = _finish(table.fqn, status, attempts, started_at, start_perf, details=details)
+        _logger.info(
+            "%s: %s (attempts=%d, %dms)", table.fqn, status.value, attempts, result.duration_ms
+        )
+        return result
 
 
 def _finish(
