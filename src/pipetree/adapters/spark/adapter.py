@@ -27,7 +27,7 @@ from pipetree.adapters.spark.merge import (
 )
 from pipetree.model import System, Table
 
-MergeFn = Callable[[SparkSession, Table, DataFrame, int, "str | None"], dict]
+MergeFn = Callable[[SparkSession, Table, DataFrame, int, "str | None", bool], dict]
 ReadSourceFn = Callable[[Table, System], DataFrame]
 
 _MERGE_FUNCTIONS: dict[str, MergeFn] = {
@@ -55,7 +55,9 @@ class SparkAdapter:
         self._base_dir = Path(base_dir)
         self._read_source = read_source or self._read_local_file_source
 
-    def run_table(self, table: Table, *, execution_id: int) -> dict[str, Any] | None:
+    def run_table(
+        self, table: Table, *, execution_id: int, init: bool = False
+    ) -> dict[str, Any] | None:
         if table.source is not None:
             system = self._systems[table.source.system]
             source_df = self._read_source(table, system)
@@ -65,7 +67,7 @@ class SparkAdapter:
             source_system = None
 
         merge_fn = _MERGE_FUNCTIONS[table.strategy]
-        result = merge_fn(self._spark, table, source_df, execution_id, source_system)
+        result = merge_fn(self._spark, table, source_df, execution_id, source_system, init)
 
         if table.unknown_member:
             seed_unknown_member(self._spark, table, execution_id)

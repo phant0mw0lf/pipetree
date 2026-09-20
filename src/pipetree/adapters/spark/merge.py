@@ -38,6 +38,7 @@ def merge_replace(
     source: DataFrame,
     execution_id: int,
     source_system: str | None,
+    init: bool = False,  # noqa: ARG001 - replace always fully overwrites; init changes nothing
 ) -> dict:
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
@@ -56,13 +57,15 @@ def merge_append(
     source: DataFrame,
     execution_id: int,
     source_system: str | None,
+    init: bool = False,
 ) -> dict:
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
 
     stamped = _with_values(source, insert_audit_values(execution_id, source_system, now))
     row_count = stamped.count()
-    mode = "append" if _table_exists(spark, table.fqn) else "overwrite"
+    # init is a full reload: start over even if the table already exists.
+    mode = "overwrite" if init or not _table_exists(spark, table.fqn) else "append"
     stamped.write.format("delta").mode(mode).saveAsTable(table.fqn)
     return {"rows_written": row_count}
 
@@ -73,6 +76,7 @@ def merge_scd1(
     source: DataFrame,
     execution_id: int,
     source_system: str | None,
+    init: bool = False,
 ) -> dict:
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
@@ -80,11 +84,14 @@ def merge_scd1(
     prepared = _prepare_source(deduped, table)
     columns = deduped.columns
 
-    if not _table_exists(spark, table.fqn):
+    # init is a full reload: seed from scratch even if the table exists.
+    if init or not _table_exists(spark, table.fqn):
         seed = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
         stamped = _with_values(seed, insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
-        stamped.write.format("delta").mode("overwrite").saveAsTable(table.fqn)
+        stamped.write.format("delta").mode("overwrite").option(
+            "overwriteSchema", "true"
+        ).saveAsTable(table.fqn)
         return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
 
     key_cond = _key_condition(table)
@@ -124,6 +131,7 @@ def merge_scd2(
     source: DataFrame,
     execution_id: int,
     source_system: str | None,
+    init: bool = False,
 ) -> dict:
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
@@ -131,11 +139,15 @@ def merge_scd2(
     prepared = _prepare_source(deduped, table)
     columns = deduped.columns
 
-    if not _table_exists(spark, table.fqn):
+    # init is a full reload: seed from scratch (a fresh version-1 history)
+    # even if the table already exists.
+    if init or not _table_exists(spark, table.fqn):
         seed = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
         stamped = _with_values(seed, scd2_insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
-        stamped.write.format("delta").mode("overwrite").saveAsTable(table.fqn)
+        stamped.write.format("delta").mode("overwrite").option(
+            "overwriteSchema", "true"
+        ).saveAsTable(table.fqn)
         return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
 
     not_deleted = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)

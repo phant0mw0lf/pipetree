@@ -81,3 +81,12 @@ def test_delete_by_execution_id_delegates_to_the_wrapped_adapter():
     adapter.delete_by_execution_id(table_for("silver.appended"), execution_id=7)
 
     assert wrapped.deleted_execution_ids == [("silver.appended", 7)]
+
+
+def test_init_flag_passes_through_to_the_wrapped_adapter():
+    wrapped = FakeAdapter()
+    adapter = FaultInjectingAdapter(wrapped, faults={})
+
+    adapter.run_table(table_for("bronze.orders"), execution_id=1, init=True)
+
+    assert wrapped.init_calls == ["bronze.orders"]

@@ -319,3 +319,53 @@ def test_seed_unknown_member_is_idempotent(spark):
     seed_unknown_member(spark, table, execution_id=2)
 
     assert len(spark.table(table.fqn).filter("id = -1").collect()) == 1
+
+
+# ------------------------------------------------------------------- init
+
+
+def test_scd1_init_replaces_the_table_instead_of_merging(spark):
+    table = make_table("customer8", "scd1")
+    merge_scd1(
+        spark, table, spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"]), 1, "crm"
+    )
+
+    merge_scd1(
+        spark, table, spark.createDataFrame([(3, "Carol")], ["id", "name"]), 2, "crm", init=True
+    )
+
+    assert set(rows(spark.table(table.fqn))) == {3}
+
+
+def test_scd2_init_replaces_the_table_instead_of_merging(spark):
+    table = make_table("dim8", "scd2")
+    merge_scd2(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    merge_scd2(
+        spark, table, spark.createDataFrame([(2, "Bob")], ["id", "name"]), 2, "crm", init=True
+    )
+
+    written = rows(spark.table(table.fqn))
+    assert set(written) == {2}
+    assert written[2]["_is_current"] is True
+
+
+def test_append_init_overwrites_instead_of_appending(spark):
+    table = make_table("events3", "append")
+    merge_append(spark, table, spark.createDataFrame([(1, "click")], ["id", "kind"]), 1, "web")
+
+    merge_append(
+        spark, table, spark.createDataFrame([(2, "view")], ["id", "kind"]), 2, "web", init=True
+    )
+
+    assert set(rows(spark.table(table.fqn))) == {2}
+
+
+def test_replace_accepts_the_init_flag_without_changing_behaviour(spark):
+    table = make_table("orders2", "replace")
+
+    result = merge_replace(
+        spark, table, spark.createDataFrame([(1, "a")], ["id", "name"]), 1, "crm", init=True
+    )
+
+    assert result["rows_written"] == 1

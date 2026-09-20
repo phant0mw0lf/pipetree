@@ -57,11 +57,16 @@ class FakeAdapter:
         self._behaviors = behaviors or {}
         self._lock = threading.Lock()
         self.calls: list[str] = []
+        self.init_calls: list[str] = []
         self.deleted_execution_ids: list[tuple[str, int]] = []
 
-    def run_table(self, table: Table, *, execution_id: int) -> dict[str, Any] | None:
+    def run_table(
+        self, table: Table, *, execution_id: int, init: bool = False
+    ) -> dict[str, Any] | None:
         with self._lock:
             self.calls.append(table.fqn)
+            if init:
+                self.init_calls.append(table.fqn)
         behavior = self._behaviors.get(table.fqn)
         if behavior is None:
             return {}

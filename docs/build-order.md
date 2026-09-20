@@ -9,8 +9,9 @@ add adapters and features behind seams the core already defines.
 - [x] **Phase A — core (part 2)**: config loader, typed model, graph
       builder, executor, Spark/Delta adapter, fault injection, example
       project and demo run.
-- [ ] **Phase B — graph features**: table selection, `--with-dependents`
-      subtree closure, tree rendering (text + Mermaid).
+- [x] **Phase B — graph features**: table selection (`--select`), the
+      `--with-dependents` subtree closure, `--init` (full reload), tree
+      rendering (text + Mermaid) via `pipetree graph`.
 - [ ] **Phase C — platforms**: `Platform` seam (local / Databricks /
       Fabric), wheel packaging, a Databricks Asset Bundle, a Fabric
       notebook entrypoint.

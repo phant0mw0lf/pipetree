@@ -36,7 +36,9 @@ class FaultInjectingAdapter:
     def capabilities(self) -> Capabilities:
         return self._wrapped.capabilities
 
-    def run_table(self, table: Table, *, execution_id: int) -> dict[str, Any] | None:
+    def run_table(
+        self, table: Table, *, execution_id: int, init: bool = False
+    ) -> dict[str, Any] | None:
         spec = self._faults.get(table.fqn)
         if spec is not None:
             if spec.kind == "fail":
@@ -49,7 +51,7 @@ class FaultInjectingAdapter:
             elif spec.kind == "slow":
                 time.sleep(spec.delay)
 
-        return self._wrapped.run_table(table, execution_id=execution_id)
+        return self._wrapped.run_table(table, execution_id=execution_id, init=init)
 
     def delete_by_execution_id(self, table: Table, execution_id: int) -> None:
         self._wrapped.delete_by_execution_id(table, execution_id)

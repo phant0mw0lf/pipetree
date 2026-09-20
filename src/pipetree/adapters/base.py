@@ -25,8 +25,14 @@ class Capabilities:
 class Adapter(Protocol):
     capabilities: Capabilities
 
-    def run_table(self, table: Table, *, execution_id: int) -> dict[str, Any] | None:
+    def run_table(
+        self, table: Table, *, execution_id: int, init: bool = False
+    ) -> dict[str, Any] | None:
         """Read the source (or run the logic file) and write the table.
+
+        `init` is the run-level "treat this as a full reload" parameter
+        from part 1 - seeding or full reloads aren't something a table
+        declares about itself, they're something a run asks for.
 
         Returns adapter-specific details (e.g. `rows_written`,
         `duplicates_dropped`) to fold into the run log, or None.

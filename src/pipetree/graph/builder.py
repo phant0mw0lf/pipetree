@@ -51,19 +51,22 @@ def _resolve_table_dependencies(table: Table, tables: dict[str, Table], base_dir
         return {
             resolved
             for name in raw_names
-            if (resolved := _resolve_dependency_name(name, tables)) is not None
+            if (resolved := resolve_table_name(name, tables)) is not None
         }
 
     resolved_deps: set[str] = set()
     for name in table.depends_on:
-        resolved = _resolve_dependency_name(name, tables)
+        resolved = resolve_table_name(name, tables)
         if resolved is None:
             raise UnresolvedDependencyError(table.fqn, name)
         resolved_deps.add(resolved)
     return resolved_deps
 
 
-def _resolve_dependency_name(name: str, tables: dict[str, Table]) -> str | None:
+def resolve_table_name(name: str, tables: dict[str, Table]) -> str | None:
+    """Resolve a name to a table's fqn: exact fqn match, or - if
+    unambiguous - a match on the bare table name. Used both for
+    dependency resolution and for `--select` on the CLI."""
     if name in tables:
         return name
 

@@ -10,9 +10,10 @@ This is the companion package to the
 series. Part 1 covers the design and the YAML schema; part 2 covers the
 executor this repo implements (multithreading, retries, failure handling).
 
-Status: Phase A (part 2's core - loader, model, graph, executor, the Spark/
-Delta adapter, and the example pipeline below) is complete. See
-`docs/build-order.md` for what's next.
+Status: Phase A (part 2's core) and Phase B (selection, subtree closure,
+tree rendering) are complete. See `docs/build-order.md` for what's next -
+Phase C (platform adapters) is the one that needs a real Databricks/Fabric
+workspace to verify.
 
 ## Prerequisites
 
@@ -49,6 +50,17 @@ A captured transcript of that run, annotated, is in `examples/demo-run.txt`.
 `uv run pipetree validate --config <path>` checks a config without running
 anything - useful in CI before a deploy.
 
+`uv run pipetree graph --config <path> [--format text|mermaid]` prints the
+dependency tree - `--format mermaid` on the example config reproduces part
+1's own diagram.
+
+A run can be scoped instead of running everything: `--select
+bronze.orders,silver.orders` runs just those tables (skipping the rest);
+add `--with-dependents` to extend that to the full descendant closure -
+the CI/CD mode from part 1, where a changed table's dependents get rebuilt
+too. `--init` is the run-level full-reload parameter: every selected table
+is seeded from scratch rather than merged against what's already there.
+
 ## Architecture
 
 See the blog series for the full design rationale. In short:
@@ -63,13 +75,15 @@ See the blog series for the full design rationale. In short:
   parses SQL `FROM`/`JOIN` or PySpark `spark.table(...)`/`spark.sql(...)`
   literals; `depends_on` lists are matched by fqn or, if unambiguous, by bare
   table name), sorts it topologically, and reports a cycle's full path if it
-  finds one.
+  finds one. `select.py` resolves `--select`/`--with-dependents` to a set of
+  fqns to run; `render.py` draws the tree as text or Mermaid.
 - **Executor** (`pipetree.executor`) — walks the dependency tree (not the
   layers) with a thread pool and a ready queue: a table starts the instant
   its parents have succeeded. Retries transient errors only (throttling,
-  timeouts, connection resets) with exponential backoff and jitter, and
-  marks every descendant of a failed table `upstream_failed` instead of
-  stopping the run.
+  timeouts, connection resets) with exponential backoff and jitter, marks
+  every descendant of a failed table `upstream_failed` instead of stopping
+  the run, and marks anything outside a `--select` scope `skipped`
+  (skipped tables never affect the run's overall success).
 - **Adapters** (`pipetree.adapters`) sit behind `run_table(table)` and know
   nothing about the engine. `SparkAdapter` (`pipetree.adapters.spark`) is the
   one real implementation - local Spark + Delta today, the same code path

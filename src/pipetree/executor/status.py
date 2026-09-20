@@ -15,9 +15,9 @@ class TableStatus(StrEnum):
     SKIPPED = "skipped"
 
 
-# A table counts as a success for the run's overall outcome in either of
-# these states - "recovered after a retry" is still a success.
-_SUCCESS_STATUSES = frozenset({TableStatus.SUCCEEDED, TableStatus.RETRIED_SUCCEEDED})
+# A run only fails because something actually went wrong - a table
+# deliberately left out of a --select never counts against it.
+_FAILURE_STATUSES = frozenset({TableStatus.FAILED, TableStatus.UPSTREAM_FAILED})
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ class RunDigest:
 
     @property
     def succeeded(self) -> bool:
-        return all(result.status in _SUCCESS_STATUSES for result in self.results.values())
+        return not any(result.status in _FAILURE_STATUSES for result in self.results.values())
 
     @property
     def exit_code(self) -> int:

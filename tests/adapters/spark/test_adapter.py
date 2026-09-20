@@ -144,3 +144,25 @@ def test_delete_by_execution_id_is_a_noop_when_the_table_does_not_exist(spark, t
     adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
 
     adapter.delete_by_execution_id(table, execution_id=1)  # must not raise
+
+
+def test_run_table_passes_init_through_to_the_merge_strategy(spark, tmp_path):
+    table = make_table(strategy="scd1", fqn="initflag.customer")
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    from pipetree.adapters.spark.merge import merge_scd1
+
+    merge_scd1(
+        spark, table, spark.createDataFrame([(1, "Alice"), (2, "Bob")], ["id", "name"]), 1, "sys"
+    )
+
+    logic_path = tmp_path / "reload.sql"
+    logic_path.write_text("SELECT 3 AS id, 'Carol' AS name")
+    reload_table = make_table(
+        strategy="scd1", fqn="initflag.customer", logic="reload.sql", source=None
+    )
+
+    adapter.run_table(reload_table, execution_id=2, init=True)
+
+    ids = {r["id"] for r in spark.table(table.fqn).collect()}
+    assert ids == {3}  # a full reload, not a merge against the existing rows

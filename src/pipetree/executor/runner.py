@@ -34,20 +34,41 @@ def run_pipeline(
     execution_id: int | None = None,
     max_workers: int = 4,
     retry_policy: RetryPolicy | None = None,
+    selected: set[str] | None = None,
+    init: bool = False,
 ) -> RunDigest:
     execution_id = generate_execution_id() if execution_id is None else execution_id
     retry_policy = retry_policy or RetryPolicy()
+    run_set = set(graph.tables) if selected is None else selected
 
-    pending_parents = {fqn: len(parents) for fqn, parents in graph.edges.items()}
     results: dict[str, TableResult] = {}
     settled: set[str] = set()  # tables with a final result: no longer schedulable
+
+    now = timestamp_bigint()
+    for fqn in graph.tables:
+        if fqn not in run_set:
+            results[fqn] = TableResult(
+                table_fqn=fqn,
+                status=TableStatus.SKIPPED,
+                attempts=0,
+                started_at=now,
+                ended_at=now,
+                duration_ms=0,
+            )
+            settled.add(fqn)
+
+    # A parent outside the run set won't run in this invocation - treat it
+    # as already satisfied rather than blocking the selected table forever.
+    pending_parents = {
+        fqn: len([p for p in graph.edges.get(fqn, ()) if p in run_set]) for fqn in run_set
+    }
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures: dict[Future[TableResult], str] = {}
 
         def submit(fqn: str) -> None:
             future = pool.submit(
-                _run_with_retries, graph.tables[fqn], adapter, execution_id, retry_policy
+                _run_with_retries, graph.tables[fqn], adapter, execution_id, retry_policy, init
             )
             futures[future] = fqn
 
@@ -67,7 +88,7 @@ def run_pipeline(
                     _mark_upstream_failed(fqn, graph, results, settled)
                 else:
                     for child in sorted(graph.reverse_edges.get(fqn, ())):
-                        if child in settled:
+                        if child not in run_set or child in settled:
                             continue
                         pending_parents[child] -= 1
                         if pending_parents[child] == 0:
@@ -105,18 +126,22 @@ def _mark_upstream_failed(
 
 
 def _run_with_retries(
-    table: Table, adapter: Adapter, execution_id: int, retry_policy: RetryPolicy
+    table: Table,
+    adapter: Adapter,
+    execution_id: int,
+    retry_policy: RetryPolicy,
+    init: bool = False,
 ) -> TableResult:
     started_at = timestamp_bigint()
     start_perf = time.perf_counter()
     attempts = 0
 
-    _logger.info("%s: starting", table.fqn)
+    _logger.info("%s: starting%s", table.fqn, " (init)" if init else "")
 
     while True:
         attempts += 1
         try:
-            details = adapter.run_table(table, execution_id=execution_id) or {}
+            details = adapter.run_table(table, execution_id=execution_id, init=init) or {}
         except Exception as exc:  # noqa: BLE001 - classified below, not swallowed
             can_retry = retry_policy.can_retry(attempts, exc)
 

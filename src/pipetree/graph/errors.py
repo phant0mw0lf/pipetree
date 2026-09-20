@@ -23,3 +23,14 @@ class CycleError(GraphError):
     def __init__(self, cycle: list[str]):
         self.cycle = cycle
         super().__init__(f"dependency cycle: {' → '.join(cycle)}")
+
+
+class UnknownTableError(GraphError):
+    """A `--select` argument doesn't match exactly one table in the graph."""
+
+    def __init__(self, name: str):
+        self.name = name
+        super().__init__(
+            f"no table matches {name!r} - not a known fully qualified name, "
+            "and no single table has that as its bare name"
+        )

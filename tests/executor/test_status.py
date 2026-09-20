@@ -38,6 +38,19 @@ def test_run_digest_fails_when_any_table_failed():
     assert digest.exit_code != 0
 
 
+def test_run_digest_succeeds_when_a_deselected_table_is_merely_skipped():
+    digest = RunDigest(
+        execution_id=250908143012456,
+        results={
+            "bronze.a": make_result("bronze.a", TableStatus.SUCCEEDED),
+            "bronze.b": make_result("bronze.b", TableStatus.SKIPPED),
+        },
+    )
+
+    assert digest.succeeded is True
+    assert digest.exit_code == 0
+
+
 def test_run_digest_fails_when_any_table_is_upstream_failed():
     digest = RunDigest(
         execution_id=250908143012456,
