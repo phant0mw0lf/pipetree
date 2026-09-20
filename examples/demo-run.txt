@@ -1,0 +1,57 @@
+$ uv run python examples/run_demo.py
+
+(JVM/Ivy/Spark startup noise trimmed - dependency resolution for
+io.delta#delta-spark and the usual "Setting default log level to WARN"
+banner. Nothing pipeline-relevant happens before this point.)
+
+2026-09-20 03:08:37,327 INFO    pipetree.executor: bronze.customer: starting
+2026-09-20 03:08:37,328 ERROR   pipetree.executor: bronze.customer: failed after 1 attempt(s): ValueError: malformed export file
+2026-09-20 03:08:37,328 INFO    pipetree.executor: bronze.orders: starting
+2026-09-20 03:08:37,328 WARNING pipetree.executor: silver.customer_enriched: upstream_failed (ancestor bronze.customer failed)
+2026-09-20 03:08:37,328 INFO    pipetree.executor: bronze.employee: starting
+2026-09-20 03:08:37,328 WARNING pipetree.executor: gold.dim_customer: upstream_failed (ancestor bronze.customer failed)
+2026-09-20 03:08:37,328 WARNING pipetree.executor: bronze.orders: attempt 1 failed (Throttled: 429 Too Many Requests), retrying in 0.91s
+2026-09-20 03:08:37,328 WARNING pipetree.executor: gold.fact_sales: upstream_failed (ancestor bronze.customer failed)
+2026-09-20 03:08:38,240 WARNING pipetree.executor: bronze.orders: attempt 2 failed (Throttled: 429 Too Many Requests), retrying in 0.75s
+2026-09-20 03:08:41,990 INFO    pipetree.executor: bronze.orders: retried→succeeded (attempts=3, 4662ms)
+2026-09-20 03:08:41,990 INFO    pipetree.executor: silver.orders: starting
+2026-09-20 03:08:41,998 INFO    pipetree.executor: bronze.employee: succeeded (attempts=1, 4670ms)
+2026-09-20 03:08:43,108 INFO    pipetree.executor: silver.orders: succeeded (attempts=1, 1117ms)
+
+Run 260920010837327: FAILED (exit code 1)
+  failed             bronze.customer                attempts=1 0ms  ValueError: malformed export file
+  succeeded          bronze.employee                attempts=1 4670ms
+  retried→succeeded  bronze.orders                  attempts=3 4662ms
+  upstream_failed    gold.dim_customer              attempts=0 0ms
+  upstream_failed    gold.fact_sales                attempts=0 0ms
+  upstream_failed    silver.customer_enriched       attempts=0 0ms
+  succeeded          silver.orders                  attempts=1 1117ms
+
+$ echo $?
+1
+
+---
+
+What this demonstrates, table by table:
+
+- bronze.customer fails outright on its one attempt (a non-transient
+  ValueError - "malformed export file" isn't the kind of error a retry
+  fixes) and is never retried.
+- Its two dependents in the tree, silver.customer_enriched and
+  gold.dim_customer, are marked upstream_failed the instant bronze.customer
+  fails - they never start. gold.fact_sales is also upstream_failed: it
+  depends on gold.dim_customer, so the failure propagates transitively
+  even though fact_sales's *other* dependency (silver.orders) succeeds.
+- bronze.orders is throttled (a transient 429) twice, then succeeds on its
+  third attempt: retried→succeeded, not just succeeded, so the digest
+  distinguishes "worked first try" from "needed the retry logic."
+- bronze.employee has no dependents and no injected fault - it starts
+  immediately, runs independently of the customer/orders failure and
+  retries happening elsewhere, and finishes as an ordinary succeeded row.
+  The run's failure doesn't touch it at all.
+- silver.orders starts the moment bronze.orders finishes (not when its
+  *layer* finishes) and succeeds - proof the scheduler walks the
+  dependency tree, not bronze/silver/gold as execution barriers.
+
+Exit code 1: the run as a whole is not a success (one table failed, three
+were never run), even though four of the seven tables completed.

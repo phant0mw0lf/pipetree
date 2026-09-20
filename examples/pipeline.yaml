@@ -1,0 +1,79 @@
+# The example pipeline from part 1 of the blog series: bronze
+# customer/orders/employee, silver, gold dim_customer + fact_sales.
+#
+# Sources are plain CSV files under examples/data/ (system type "csv"),
+# standing in for the real Dataverse/D365/SQL Server connectors that land
+# in Phase D - the schema and the dependency tree are exactly what the
+# post describes either way.
+
+defaults:
+  system_columns:
+    - _inserted_at
+    - _updated_at
+    - _is_deleted
+    - _execution_id
+    - _source_system
+
+systems:
+  crm_dataverse:
+    type: csv
+    path: data/customer.csv
+  erp_d365:
+    type: csv
+    path: data/orders.csv
+  hr_sqlserver:
+    type: csv
+    path: data/employee.csv
+
+bronze:
+  tables:
+    customer:
+      source:
+        system: crm_dataverse
+        object: account
+      business_key: [accountid]
+      strategy: scd2
+      merge:
+        sequence_by: [versionnumber]
+        delete_when: "isdelete = true"
+        delete_mode: soft
+        ignore_columns: [modifiedon]
+    orders:
+      source:
+        system: erp_d365
+        object: SalesOrderHeader
+      business_key: [order_id]
+      strategy: scd1
+    employee:
+      source:
+        system: hr_sqlserver
+        object: dbo.Employee
+      business_key: [employee_id]
+      strategy: scd1
+
+silver:
+  tables:
+    customer_enriched:
+      logic: notebooks/silver/customer_enriched.sql
+      business_key: [accountid]
+      strategy: replace
+      depends_on: auto
+    orders:
+      logic: notebooks/silver/orders.sql
+      business_key: [order_id]
+      strategy: replace
+      depends_on: auto
+
+gold:
+  tables:
+    dim_customer:
+      logic: notebooks/gold/dim_customer.sql
+      business_key: [accountid]
+      unknown_member: true
+      strategy: scd2
+      depends_on: auto
+    fact_sales:
+      logic: notebooks/gold/fact_sales.py
+      business_key: [order_id]
+      strategy: replace
+      depends_on: auto

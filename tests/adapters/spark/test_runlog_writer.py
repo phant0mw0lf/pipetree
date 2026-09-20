@@ -46,3 +46,35 @@ def test_does_not_write_when_there_are_no_rows(spark):
     writer.write([], execution_id=1)
 
     assert not spark.catalog.tableExists("rl_d.log")
+
+
+def test_writes_rows_whose_optional_columns_are_all_none(spark):
+    # A real run_log_rows() batch: successful tables have no error_type,
+    # a fresh table has no rows_written yet, etc. Spark can't infer a type
+    # for a column that's None in every row of a plain dict-list unless
+    # the writer supplies an explicit schema.
+    writer = DeltaRunLogWriter(spark, table_fqn="rl_e.log")
+    rows = [
+        {
+            "_execution_id": 1,
+            "table_fqn": "bronze.orders",
+            "layer": "bronze",
+            "strategy": "scd1",
+            "status": "succeeded",
+            "attempts": 1,
+            "started_at": 1,
+            "ended_at": 2,
+            "duration_ms": 100,
+            "rows_written": None,
+            "duplicates_dropped": None,
+            "schema_changes": None,
+            "error_type": None,
+            "error_message": None,
+        }
+    ]
+
+    writer.write(rows, execution_id=1)
+
+    written = spark.table("rl_e.log").collect()
+    assert written[0]["table_fqn"] == "bronze.orders"
+    assert written[0]["error_type"] is None
