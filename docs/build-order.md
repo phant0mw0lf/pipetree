@@ -12,9 +12,14 @@ add adapters and features behind seams the core already defines.
 - [x] **Phase B — graph features**: table selection (`--select`), the
       `--with-dependents` subtree closure, `--init` (full reload), tree
       rendering (text + Mermaid) via `pipetree graph`.
-- [ ] **Phase C — platforms**: `Platform` seam (local / Databricks /
-      Fabric), wheel packaging, a Databricks Asset Bundle, a Fabric
-      notebook entrypoint.
+- [x] **Phase C — platforms**: `Platform` seam (local / Databricks /
+      Fabric) built and unit-tested against mocked `dbutils`/
+      `notebookutils`; wheel packaging verified; a Databricks Asset Bundle
+      and a Fabric notebook entrypoint. **Not yet verified against a real
+      workspace** - see `examples/databricks/README.md` and
+      `examples/fabric/README.md` for exactly what to check. That
+      verification round (deploy both, report back what breaks) is next,
+      and doesn't block Phase D.
 - [ ] **Phase D — sources**: `SourceReader` registry, `sqlserver`,
       `storage_stream` (Structured Streaming with `Trigger.AvailableNow`,
       Auto Loader on Databricks), `kusto`, `custom` class-by-name loader.

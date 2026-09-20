@@ -1,0 +1,67 @@
+# Databricks Asset Bundle for the pipetree example pipeline.
+#
+# NOT VERIFIED against a real workspace yet - this is Phase C's starting
+# point. See README.md for what to check before trusting it, in
+# particular: the Databricks Runtime version below (pin to whatever's
+# current when you deploy), the node type (an Azure SKU - swap for AWS/GCP
+# as needed), and whether `dbutils` is really available in a
+# spark_python_task the way run_on_databricks.py assumes.
+#
+# Deploy: databricks bundle deploy -t dev
+# Run:    databricks bundle run pipetree_example -t dev
+
+bundle:
+  name: pipetree-example
+
+variables:
+  catalog:
+    description: Unity Catalog catalog to write the example tables into
+    default: main
+  secret_scope:
+    description: >
+      A Unity-Catalog-backed secret scope (create with
+      `databricks secrets create-scope --scope pipetree --scope-backend-type UC`)
+      - not a legacy Azure-Key-Vault-backed one. Unused by the example
+      pipeline itself (its one source is a local CSV, no secrets), but
+      wired through so a real system config can add one without code
+      changes.
+    default: pipetree
+
+artifacts:
+  pipetree:
+    type: whl
+    build: uv build --wheel
+    path: ../../
+
+resources:
+  jobs:
+    pipetree_example:
+      name: "pipetree example run"
+      tasks:
+        - task_key: run_pipeline
+          new_cluster:
+            # Pin to whatever's current when you deploy - this one is a
+            # placeholder, not verified.
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "Standard_DS3_v2" # Azure SKU; swap for your cloud
+            num_workers: 0 # single-node is enough for the example's data
+            data_security_mode: SINGLE_USER
+          spark_python_task:
+            python_file: ./run_on_databricks.py
+            # No config_path parameter: run_on_databricks.py resolves it
+            # relative to its own synced location (`__file__`), which is
+            # robust regardless of the task's working directory - a
+            # relative path parameter here would not be.
+            parameters:
+              - "${var.catalog}"
+              - "${var.secret_scope}"
+          libraries:
+            - whl: ../../dist/*.whl
+
+targets:
+  dev:
+    default: true
+    # No `workspace.host` here on purpose - relies on your `databricks`
+    # CLI's default auth profile (`databricks configure` or
+    # DATABRICKS_HOST/DATABRICKS_TOKEN env vars). Add one explicitly if
+    # you use named profiles instead.

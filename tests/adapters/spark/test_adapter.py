@@ -19,9 +19,70 @@ def make_table(**overrides) -> Table:
     return Table.model_validate(defaults)
 
 
+class FakePlatform:
+    """Records what it's asked to resolve, so tests can prove the adapter
+    actually consults the platform rather than working around it."""
+
+    name = "fake"
+
+    def __init__(self, secrets: dict[str, str] | None = None) -> None:
+        self._secrets = secrets or {}
+        self.resolved_paths: list[tuple[str, object]] = []
+
+    def resolve_secret(self, name: str) -> str:
+        return self._secrets[name]
+
+    def qualify_table_name(self, fqn: str) -> str:
+        return fqn
+
+    def resolve_path(self, relative_path, base_dir):
+        self.resolved_paths.append((relative_path, base_dir))
+        return str(base_dir / relative_path)
+
+    def run_metadata(self) -> dict[str, str]:
+        return {}
+
+
 def test_capabilities_declares_atomic_append_retry_support(spark, tmp_path):
     adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
     assert adapter.capabilities.supports_delete_by_execution_id is True
+
+
+def test_defaults_to_the_local_platform(spark, tmp_path):
+    from pipetree.platform.local import LocalPlatform
+
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    assert isinstance(adapter._platform, LocalPlatform)  # noqa: SLF001 - white-box sanity check
+
+
+def test_read_local_file_source_resolves_the_path_through_the_platform(spark, tmp_path):
+    (tmp_path / "customer.csv").write_text("id,name\n1,Alice\n")
+    system = System.model_validate({"type": "csv", "path": "customer.csv"})
+    table = make_table(
+        source={"system": "crm", "object": "customer"}, strategy="scd1", fqn="bronze_f.customer"
+    )
+    platform = FakePlatform()
+    adapter = SparkAdapter(spark, systems={"crm": system}, base_dir=tmp_path, platform=platform)
+
+    adapter.run_table(table, execution_id=1)
+
+    assert platform.resolved_paths == [("customer.csv", tmp_path)]
+
+
+def test_read_local_file_source_resolves_a_secret_path(spark, tmp_path):
+    (tmp_path / "customer.csv").write_text("id,name\n1,Alice\n")
+    system = System.model_validate({"type": "csv", "path": {"secret": "customer-csv-path"}})
+    table = make_table(
+        source={"system": "crm", "object": "customer"}, strategy="scd1", fqn="bronze_g.customer"
+    )
+    platform = FakePlatform(secrets={"customer-csv-path": "customer.csv"})
+    adapter = SparkAdapter(spark, systems={"crm": system}, base_dir=tmp_path, platform=platform)
+
+    result = adapter.run_table(table, execution_id=1)
+
+    assert result is not None
+    assert result["rows_written"] == 1
 
 
 def test_run_table_reads_a_source_table_via_read_source_and_merges(spark, tmp_path):

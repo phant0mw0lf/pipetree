@@ -167,3 +167,55 @@ row dicts is a fine default until the data you're logging is mostly nulls.
   that even though every `Column` *is* an `ExpressionOrColumn`. No real bug
   here, just `pyright` noise; fixed with a couple of explicit
   `dict[str, str | Column]` annotations rather than fighting it.
+
+## Phase C: the platform seam
+
+**A real bug this phase caught: `run_pipeline()` was always forcing
+`local[*]`.** With no adapter given, it built a brand-new SparkSession via
+`build_local_session()` unconditionally - fine on a laptop, but wrong on
+an actual Databricks or Fabric cluster, which already has a distributed
+session running. The fix is one line
+(`SparkSession.getActiveSession() or build_local_session()`), but it only
+surfaced by actually writing the Databricks/Fabric entrypoints and asking
+"what SparkSession does this use." Worth calling out in the post as an
+example of why the platform work matters even before a real workspace is
+involved - designing the entrypoint honestly finds bugs the local demo
+never could.
+
+**Secret resolution is pluggable on `DatabricksPlatform`, not hardcoded to
+`dbutils.secrets`.** The first draft called `dbutils.secrets.get(scope,
+key)` unconditionally. Corrected: that's fine as a default *as long as the
+scope is Unity-Catalog-backed* (`--scope-backend-type UC`), but a legacy
+Azure-Key-Vault-backed secret scope is exactly what Databricks itself now
+treats as legacy and less secure. So `DatabricksPlatform` takes an
+optional `secret_resolver` callable instead of assuming dbutils is the
+only path - the intended real alternative is an Access Connector for
+Azure Databricks (a UC-governed managed identity) reading Key Vault
+directly, which a caller wires up as its own `secret_resolver` rather than
+this package guessing the exact SDK calls.
+
+**Unity Catalog naming: session-default catalog, not fqn rewriting.**
+`DatabricksPlatform.qualify_table_name()` exists and is tested
+(`catalog.schema.table`), but nothing forces it onto every table
+reference. The reason: `depends_on: auto` and every logic file's
+`spark.table(...)`/`FROM` reference the plain two-level `schema.table`
+name, and rewriting all of those consistently across a whole pipeline
+just to get three-level names would be real surgery for something Unity
+Catalog already solves more simply - set the session's default catalog
+once (`spark.sql(f"USE CATALOG {catalog}")` or
+`spark.catalog.setCurrentCatalog(catalog)`) in the job entrypoint, and
+every existing two-level reference resolves against it unchanged.
+`qualify_table_name()` stays available for anything that genuinely needs
+an explicit three-level reference later, without forcing that shape
+everywhere.
+
+**The DAB and Fabric notebook are unverified - deliberately, and said so
+in both READMEs.** Neither `examples/databricks/` nor `examples/fabric/`
+has run against a real workspace yet; both were built against documented
+APIs (`dbutils.secrets`, `notebookutils.credentials.getSecret`) and
+reasonable conventions, with the specific things most likely to be wrong
+called out explicitly in each README (`dbutils` availability in a
+`spark_python_task`, the exact Files-mount path convention, the runtime
+version pinned in `databricks.yml`). This is the handoff point: the
+verification round is David deploying both and reporting back what
+breaks, not something to fake confidence about here.

@@ -10,10 +10,11 @@ This is the companion package to the
 series. Part 1 covers the design and the YAML schema; part 2 covers the
 executor this repo implements (multithreading, retries, failure handling).
 
-Status: Phase A (part 2's core) and Phase B (selection, subtree closure,
-tree rendering) are complete. See `docs/build-order.md` for what's next -
-Phase C (platform adapters) is the one that needs a real Databricks/Fabric
-workspace to verify.
+Status: Phase A (part 2's core), Phase B (selection, subtree closure, tree
+rendering) and Phase C (the platform seam, a Databricks Asset Bundle, a
+Fabric notebook) are built. Phase C is **not yet verified against a real
+workspace** - see `examples/databricks/README.md` and
+`examples/fabric/README.md`. See `docs/build-order.md` for what's next.
 
 ## Prerequisites
 
@@ -87,8 +88,17 @@ See the blog series for the full design rationale. In short:
 - **Adapters** (`pipetree.adapters`) sit behind `run_table(table)` and know
   nothing about the engine. `SparkAdapter` (`pipetree.adapters.spark`) is the
   one real implementation - local Spark + Delta today, the same code path
-  Fabric and Databricks run on in later parts - with `scd1`/`scd2`/`replace`/
-  `append` all implemented against Delta's merge builder.
+  Fabric and Databricks run on - with `scd1`/`scd2`/`replace`/`append` all
+  implemented against Delta's merge builder. With no active SparkSession it
+  builds a local one; on a real cluster it reuses the one already running.
+- **Platforms** (`pipetree.platform`) answer "where am I running?" for
+  secrets, table naming, storage paths and run metadata - `LocalPlatform`
+  (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret
+  scope by default, or a pluggable `secret_resolver` for reading Key Vault
+  directly through an Access Connector; Unity Catalog naming is handled by
+  setting the session's default catalog, not by rewriting every table
+  reference), `FabricPlatform` (`notebookutils.credentials`, the attached
+  lakehouse's `Files/` mount). `detect()` picks one from runtime markers.
 - **Run log & notifier** (`pipetree.runlog`) — every table's result is
   collected in memory and written once, at the end, to
   `_meta.pipeline_run_log` (a `replaceWhere` on `_execution_id`, so
@@ -96,8 +106,15 @@ See the blog series for the full design rationale. In short:
   pluggable `Notifier` reports the digest (`ConsoleNotifier` by default).
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
-parameters, the `append` retry rule, two real Spark/Delta bugs) made while
-building this.
+parameters, the `append` retry rule, two real Spark/Delta bugs, the
+platform seam) made while building this.
+
+## Running on Databricks or Fabric
+
+`examples/databricks/` (a Databricks Asset Bundle) and `examples/fabric/`
+(a notebook) run the same example pipeline against a real workspace
+instead of a laptop. **Neither has been verified against a real workspace
+yet** - each README says exactly what to check before trusting it.
 
 ## Development
 

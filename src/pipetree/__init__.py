@@ -96,8 +96,14 @@ def _default_spark_adapter(config: PipelineConfig, base_dir: Path) -> Adapter:
     # Imported lazily: pyspark is the optional 'spark' extra, and code that
     # supplies its own adapter (tests, a future platform adapter) shouldn't
     # have to install it.
+    from pyspark.sql import SparkSession
+
     from pipetree.adapters.spark.adapter import SparkAdapter
     from pipetree.adapters.spark.session import build_local_session
 
-    spark = build_local_session()
+    # A Databricks or Fabric run already has a distributed SparkSession
+    # active; build_local_session() forces local[*], which would be wrong
+    # there. Only build a new local session when nothing is already
+    # running - true on a laptop, never true on a real cluster.
+    spark = SparkSession.getActiveSession() or build_local_session()
     return SparkAdapter(spark, systems=config.systems, base_dir=base_dir)

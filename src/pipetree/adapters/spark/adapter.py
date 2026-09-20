@@ -26,6 +26,8 @@ from pipetree.adapters.spark.merge import (
     seed_unknown_member,
 )
 from pipetree.model import System, Table
+from pipetree.platform.base import Platform, resolve_value
+from pipetree.platform.local import LocalPlatform
 
 MergeFn = Callable[[SparkSession, Table, DataFrame, int, "str | None", bool], dict]
 ReadSourceFn = Callable[[Table, System], DataFrame]
@@ -49,10 +51,12 @@ class SparkAdapter:
         systems: dict[str, System],
         base_dir: str | Path,
         read_source: ReadSourceFn | None = None,
+        platform: Platform | None = None,
     ) -> None:
         self._spark = spark
         self._systems = systems
         self._base_dir = Path(base_dir)
+        self._platform = platform or LocalPlatform()
         self._read_source = read_source or self._read_local_file_source
 
     def run_table(
@@ -113,11 +117,16 @@ class SparkAdapter:
                 "read_source callable to SparkAdapter to supply one in the meantime."
             )
 
-        path = getattr(system, "path", None)
-        if not path:
+        raw_path = getattr(system, "path", None)
+        if not raw_path:
             raise ValueError(f"{table.fqn}: system type {system.type!r} requires a 'path' property")
+
+        # `path` is a literal or a `{secret: name}` reference, per the same
+        # schema rule as every other connection property.
+        relative_path = resolve_value(raw_path, self._platform)
+        resolved_path = self._platform.resolve_path(relative_path, self._base_dir)
 
         reader = self._spark.read
         if system.type == "csv":
             reader = reader.option("header", "true").option("inferSchema", "true")
-        return reader.format(system.type).load(str(self._base_dir / path))
+        return reader.format(system.type).load(resolved_path)
