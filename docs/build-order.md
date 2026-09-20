@@ -6,7 +6,7 @@ demoable on its own before the platform-specific work lands. Nothing built
 in a later phase changes the public shape of an earlier one — later phases
 add adapters and features behind seams the core already defines.
 
-- [ ] **Phase A — core (part 2)**: config loader, typed model, graph
+- [x] **Phase A — core (part 2)**: config loader, typed model, graph
       builder, executor, Spark/Delta adapter, fault injection, example
       project and demo run.
 - [ ] **Phase B — graph features**: table selection, `--with-dependents`
@@ -19,8 +19,9 @@ add adapters and features behind seams the core already defines.
       Auto Loader on Databricks), `kusto`, `custom` class-by-name loader.
 - [ ] **Phase E — schema drift**: inference, diff, `evolve | fail | ignore`
       policies.
-- [ ] **Phase F — declarative + docs**: AUTO CDC translation for Databricks
-      declarative pipelines, README, `NOTES-for-blog.md`.
+- [ ] **Phase F — declarative pipelines**: AUTO CDC translation for
+      Databricks declarative pipelines.
 
-Each phase is small commits, tests first. See `NOTES-for-blog.md` (added in
-Phase A) for the design decisions and trade-offs made along the way.
+Each phase is small commits, tests first. README and `NOTES-for-blog.md`
+were written during Phase A rather than held for the end, since that phase
+had to be publishable on its own; both get revisited as later phases land.
