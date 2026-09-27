@@ -41,6 +41,12 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# ruff format also reformats Python fenced code blocks inside Markdown
+# files it discovers - docs/superpowers/ holds specs and plans whose
+# embedded code is illustrative prose, not source ruff should own or
+# rewrite (a `ruff format .` without --check has already mangled a plan
+# document's embedded snippets once during this project's execution).
+extend-exclude = ["docs/superpowers/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
