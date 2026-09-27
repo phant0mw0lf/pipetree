@@ -23,3 +23,6 @@ _delta_log/
 examples/**/_output/
 
 .DS_Store
+
+# Local git worktrees (subagent-driven-development isolation)
+.worktrees/
