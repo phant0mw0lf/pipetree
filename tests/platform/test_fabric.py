@@ -60,3 +60,25 @@ def test_run_metadata_returns_what_it_was_given():
     )
 
     assert platform.run_metadata() == {"run_id": "7"}
+
+
+class FakeCredentialsWithToken(FakeCredentials):
+    def __init__(self, secret_values, token: str) -> None:
+        super().__init__(secret_values)
+        self._token = token
+        self.requested_resource: str | None = None
+
+    def getToken(self, resource: str) -> str:  # noqa: N802 - matches Fabric's real API
+        self.requested_resource = resource
+        return self._token
+
+
+def test_acquire_token_delegates_to_notebookutils_get_token():
+    credentials = FakeCredentialsWithToken({}, token="fabric-token")
+    notebookutils = FakeNotebookUtils(credentials)
+    platform = FabricPlatform(notebookutils, key_vault_url="https://kv.vault.azure.net/")
+
+    result = platform.acquire_token("https://database.windows.net/")
+
+    assert result == "fabric-token"
+    assert credentials.requested_resource == "https://database.windows.net/"

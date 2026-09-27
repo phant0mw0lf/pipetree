@@ -17,6 +17,7 @@ class FakeSecrets:
 class FakeDbutils:
     def __init__(self, secrets: FakeSecrets) -> None:
         self.secrets = secrets
+        self.credentials: FakeCredentialsAPI | None = None
 
 
 def make_platform(secret_values: dict[tuple[str, str], str] | None = None) -> DatabricksPlatform:
@@ -81,3 +82,40 @@ def test_run_metadata_returns_what_it_was_given():
     )
 
     assert platform.run_metadata() == {"job_id": "42"}
+
+
+class FakeCredentialsAPI:
+    def __init__(self, tokens: dict[str, str]) -> None:
+        self._tokens = tokens
+
+    def getServiceCredentialsFor(self, name: str) -> str:  # noqa: N802 - matches Databricks' real API
+        return self._tokens[name]
+
+
+def make_platform_with_service_credentials(
+    tokens: dict[str, str], service_credentials: dict[str, str]
+) -> DatabricksPlatform:
+    dbutils = FakeDbutils(FakeSecrets({}))
+    dbutils.credentials = FakeCredentialsAPI(tokens)
+    return DatabricksPlatform(
+        dbutils=dbutils,
+        catalog="prod",
+        secret_scope="pipetree",
+        service_credentials=service_credentials,
+    )
+
+
+def test_acquire_token_resolves_through_the_named_service_credential():
+    platform = make_platform_with_service_credentials(
+        tokens={"sql-cred": "sql-token"},
+        service_credentials={"https://database.windows.net/": "sql-cred"},
+    )
+
+    assert platform.acquire_token("https://database.windows.net/") == "sql-token"
+
+
+def test_acquire_token_raises_for_an_unconfigured_resource():
+    platform = make_platform_with_service_credentials(tokens={}, service_credentials={})
+
+    with pytest.raises(ValueError, match="database.windows.net"):
+        platform.acquire_token("https://database.windows.net/")

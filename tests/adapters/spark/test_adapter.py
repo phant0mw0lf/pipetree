@@ -50,6 +50,9 @@ class FakePlatform:
     def run_metadata(self) -> dict[str, str]:
         return {}
 
+    def acquire_token(self, resource: str) -> str:
+        return "fake-token"
+
 
 def test_capabilities_declares_atomic_append_retry_support(spark, tmp_path):
     adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)

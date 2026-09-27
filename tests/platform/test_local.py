@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,3 +46,28 @@ def test_resolve_path_joins_base_dir():
 
 def test_run_metadata_is_empty():
     assert LocalPlatform().run_metadata() == {}
+
+
+class FakeCredential:
+    def __init__(self, token: str) -> None:
+        self._token = token
+        self.requested_scopes: list[str] = []
+
+    def get_token(self, scope: str):
+        self.requested_scopes.append(scope)
+        return SimpleNamespace(token=self._token)
+
+
+def test_acquire_token_uses_the_injected_credential():
+    platform = LocalPlatform(token_credential=FakeCredential("fake-token"))
+
+    assert platform.acquire_token("https://database.windows.net/") == "fake-token"
+
+
+def test_acquire_token_scopes_the_request_to_default():
+    credential = FakeCredential("fake-token")
+    platform = LocalPlatform(token_credential=credential)
+
+    platform.acquire_token("https://database.windows.net/")
+
+    assert credential.requested_scopes == ["https://database.windows.net/.default"]

@@ -9,6 +9,11 @@ Access Connector for Azure Databricks (a UC-governed managed identity) and
 pass a `secret_resolver` callable that reads through it - the default
 dbutils path is convenience, not the only supported route.
 
+`acquire_token` is the token-based counterpart: a named Unity Catalog
+service credential (backed by the same Access Connector) is resolved via
+`dbutils.credentials.getServiceCredentialsFor(name)` - see Open risks in
+the scale-validation spec for this feature's maturity.
+
 `run_metadata` is supplied by the caller rather than pulled from
 `dbutils` here - extracting job/run id reliably means reaching into
 `dbutils.notebook.entry_point.getDbutils().notebook().getContext().tags()`,
@@ -35,6 +40,7 @@ class DatabricksPlatform:
         dbutils: Any = None,
         secret_scope: str | None = None,
         secret_resolver: Callable[[str], str] | None = None,
+        service_credentials: dict[str, str] | None = None,
         run_metadata: dict[str, str] | None = None,
     ) -> None:
         if secret_resolver is None:
@@ -48,6 +54,8 @@ class DatabricksPlatform:
 
         self._secret_resolver = secret_resolver
         self._catalog = catalog
+        self._dbutils = dbutils
+        self._service_credentials = dict(service_credentials) if service_credentials else {}
         self._run_metadata = dict(run_metadata) if run_metadata else {}
 
     def resolve_secret(self, name: str) -> str:
@@ -61,6 +69,18 @@ class DatabricksPlatform:
 
     def run_metadata(self) -> dict[str, str]:
         return dict(self._run_metadata)
+
+    def acquire_token(self, resource: str) -> str:
+        try:
+            credential_name = self._service_credentials[resource]
+        except KeyError:
+            raise ValueError(
+                f"no Unity Catalog service credential configured for resource "
+                f"{resource!r} (configured: {sorted(self._service_credentials)})"
+            ) from None
+        if self._dbutils is None:
+            raise ValueError("acquire_token requires dbutils (a real Databricks runtime)")
+        return self._dbutils.credentials.getServiceCredentialsFor(credential_name)
 
 
 def _dbutils_secret_resolver(dbutils: Any, secret_scope: str) -> Callable[[str], str]:

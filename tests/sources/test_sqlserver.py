@@ -168,3 +168,42 @@ def test_raises_a_clear_error_when_auth_is_missing():
 
     with pytest.raises(ValueError, match="auth"):
         read(ctx)
+
+
+def test_uses_aad_token_auth_when_mode_is_aad_token():
+    class FakePlatform(LocalPlatform):
+        def acquire_token(self, resource):
+            assert resource == "https://database.windows.net/"
+            return "fake-token"
+
+    system = System.model_validate(
+        {
+            "type": "sqlserver",
+            "host": "sql.example.com",
+            "database": "hr",
+            "auth": {"mode": "aad_token"},
+        }
+    )
+    spark: Any = FakeSpark()
+    ctx = SourceContext(spark, make_table(), system, FakePlatform(), Path("."))
+
+    _, _, options = read(ctx)
+
+    assert options["accessToken"] == "fake-token"
+    assert "user" not in options
+    assert "password" not in options
+
+
+def test_rejects_an_unknown_auth_mode():
+    system = System.model_validate(
+        {
+            "type": "sqlserver",
+            "host": "sql.example.com",
+            "database": "hr",
+            "auth": {"mode": "bogus"},
+        }
+    )
+    ctx = make_ctx(system)
+
+    with pytest.raises(ValueError, match="auth.mode"):
+        read(ctx)

@@ -20,6 +20,8 @@ _PARTITION_OPTIONS = ("partitionColumn", "numPartitions", "lowerBound", "upperBo
 
 
 class SqlServerSource:
+    _AAD_TOKEN_RESOURCE = "https://database.windows.net/"
+
     def read(self, ctx: SourceContext) -> DataFrame:
         system = ctx.system
         fqn = ctx.table.fqn
@@ -40,11 +42,20 @@ class SqlServerSource:
         reader = ctx.spark.read.format("jdbc").option("url", url).option("dbtable", object_name)
 
         auth = _required(getattr(system, "auth", None), "auth", fqn)
-        user = resolve_value(_required(auth.get("user"), "auth.user", fqn), ctx.platform)
-        password = resolve_value(
-            _required(auth.get("password"), "auth.password", fqn), ctx.platform
-        )
-        reader = reader.option("user", user).option("password", password)
+        mode = auth.get("mode", "password")
+        if mode == "aad_token":
+            token = ctx.platform.acquire_token(self._AAD_TOKEN_RESOURCE)
+            reader = reader.option("accessToken", token)
+        elif mode == "password":
+            user = resolve_value(_required(auth.get("user"), "auth.user", fqn), ctx.platform)
+            password = resolve_value(
+                _required(auth.get("password"), "auth.password", fqn), ctx.platform
+            )
+            reader = reader.option("user", user).option("password", password)
+        else:
+            raise ValueError(
+                f"{fqn}: sqlserver auth.mode must be 'password' or 'aad_token', got {mode!r}"
+            )
 
         for option_name in _PARTITION_OPTIONS:
             value = getattr(system, option_name, None)
