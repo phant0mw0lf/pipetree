@@ -249,42 +249,43 @@ Expected: FAIL with `TypeError: DatabricksPlatform.__init__() got an unexpected 
 In `src/pipetree/platform/databricks.py`, update `__init__` and add `acquire_token`:
 
 ```python
-    def __init__(
-        self,
-        *,
-        catalog: str,
-        dbutils: Any = None,
-        secret_scope: str | None = None,
-        secret_resolver: Callable[[str], str] | None = None,
-        service_credentials: dict[str, str] | None = None,
-        run_metadata: dict[str, str] | None = None,
-    ) -> None:
-        if secret_resolver is None:
-            if dbutils is None or secret_scope is None:
-                raise ValueError(
-                    "provide secret_resolver, or both dbutils and secret_scope "
-                    "(a Unity-Catalog-backed secret scope, not a legacy "
-                    "Azure-Key-Vault-backed one)"
-                )
-            secret_resolver = _dbutils_secret_resolver(dbutils, secret_scope)
-
-        self._secret_resolver = secret_resolver
-        self._catalog = catalog
-        self._dbutils = dbutils
-        self._service_credentials = dict(service_credentials) if service_credentials else {}
-        self._run_metadata = dict(run_metadata) if run_metadata else {}
-
-    def acquire_token(self, resource: str) -> str:
-        try:
-            credential_name = self._service_credentials[resource]
-        except KeyError:
+def __init__(
+    self,
+    *,
+    catalog: str,
+    dbutils: Any = None,
+    secret_scope: str | None = None,
+    secret_resolver: Callable[[str], str] | None = None,
+    service_credentials: dict[str, str] | None = None,
+    run_metadata: dict[str, str] | None = None,
+) -> None:
+    if secret_resolver is None:
+        if dbutils is None or secret_scope is None:
             raise ValueError(
-                f"no Unity Catalog service credential configured for resource "
-                f"{resource!r} (configured: {sorted(self._service_credentials)})"
-            ) from None
-        if self._dbutils is None:
-            raise ValueError("acquire_token requires dbutils (a real Databricks runtime)")
-        return self._dbutils.credentials.getServiceCredentialsFor(credential_name)
+                "provide secret_resolver, or both dbutils and secret_scope "
+                "(a Unity-Catalog-backed secret scope, not a legacy "
+                "Azure-Key-Vault-backed one)"
+            )
+        secret_resolver = _dbutils_secret_resolver(dbutils, secret_scope)
+
+    self._secret_resolver = secret_resolver
+    self._catalog = catalog
+    self._dbutils = dbutils
+    self._service_credentials = dict(service_credentials) if service_credentials else {}
+    self._run_metadata = dict(run_metadata) if run_metadata else {}
+
+
+def acquire_token(self, resource: str) -> str:
+    try:
+        credential_name = self._service_credentials[resource]
+    except KeyError:
+        raise ValueError(
+            f"no Unity Catalog service credential configured for resource "
+            f"{resource!r} (configured: {sorted(self._service_credentials)})"
+        ) from None
+    if self._dbutils is None:
+        raise ValueError("acquire_token requires dbutils (a real Databricks runtime)")
+    return self._dbutils.credentials.getServiceCredentialsFor(credential_name)
 ```
 
 Update the module docstring's second paragraph to add: *"`acquire_token` is the token-based counterpart: a named Unity Catalog service credential (backed by the same Access Connector) is resolved via `dbutils.credentials.getServiceCredentialsFor(name)` - see Open risks in the scale-validation spec for this feature's maturity."*
@@ -2311,8 +2312,7 @@ def row_count_for(
             return SMALL_FIXED_ROW_COUNTS[spec.table_name]
         except KeyError:
             raise KeyError(
-                f"{spec.table_name}: small tables need a fixed row count in "
-                "SMALL_FIXED_ROW_COUNTS"
+                f"{spec.table_name}: small tables need a fixed row count in SMALL_FIXED_ROW_COUNTS"
             ) from None
 
     class_budget_gb = scale_factor_gb * _CLASS_BUDGET_FRACTION[spec.size_class]
@@ -2567,8 +2567,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         .withColumn("sku", "string", template=r"SKU-\d{6}")
         .withColumn("product_name", "string", template=r"\\w \\w \\w")
         .withColumn(
-            "category", "string",
-            values=["Electronics", "Furniture", "Apparel", "Food", "Tools"], random=True,
+            "category",
+            "string",
+            values=["Electronics", "Furniture", "Apparel", "Food", "Tools"],
+            random=True,
         )
         .withColumn("unit_price", "decimal(10,2)", minValue=5, maxValue=2000, random=True)
         .build()
@@ -2580,8 +2582,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         )
         .withColumn("account_number", "string", template=r"\d{4}")
         .withColumn(
-            "account_type", "string",
-            values=["Asset", "Liability", "Equity", "Revenue", "Expense"], random=True,
+            "account_type",
+            "string",
+            values=["Asset", "Liability", "Equity", "Revenue", "Expense"],
+            random=True,
         )
         .build()
     )
@@ -2635,7 +2639,9 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     gl_txn_n = _rows("gl_transaction", scale_factor_gb)
     gl_transaction = (
         dg.DataGenerator(spark, name="erp_gl_transaction", rows=gl_txn_n, partitions=16)
-        .withColumn("gl_transaction_id", "long", minValue=1, maxValue=gl_txn_n, uniqueValues=gl_txn_n)
+        .withColumn(
+            "gl_transaction_id", "long", minValue=1, maxValue=gl_txn_n, uniqueValues=gl_txn_n
+        )
         .withColumn("gl_account_id", "long", minValue=1, maxValue=gl_account_n)
         .withColumn("order_id", "long", minValue=1, maxValue=order_n)
         .withColumn("posted_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True)
@@ -2720,9 +2726,7 @@ def test_opportunity_foreign_keys_all_resolve_to_real_accounts(spark):
     tables = generate_all(spark, scale_factor_gb=0.001)
 
     account_ids = {r.account_id for r in tables["account"].select("account_id").collect()}
-    opp_account_ids = {
-        r.account_id for r in tables["opportunity"].select("account_id").collect()
-    }
+    opp_account_ids = {r.account_id for r in tables["opportunity"].select("account_id").collect()}
 
     assert opp_account_ids <= account_ids
 ```
@@ -2776,8 +2780,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         .withColumn("account_id", "long", minValue=1, maxValue=account_n, uniqueValues=account_n)
         .withColumn("account_name", "string", template=r"\\w \\w \\w Ltd.")
         .withColumn(
-            "industry", "string",
-            values=["Manufacturing", "Retail", "Healthcare", "Finance", "Technology"], random=True,
+            "industry",
+            "string",
+            values=["Manufacturing", "Retail", "Healthcare", "Finance", "Technology"],
+            random=True,
         )
         .withColumn("created_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True)
         .build()
@@ -2788,11 +2794,16 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="crm_lead", rows=lead_n, partitions=8)
         .withColumn("lead_id", "long", minValue=1, maxValue=lead_n, uniqueValues=lead_n)
         .withColumn(
-            "lead_source", "string",
-            values=["Web", "Referral", "Event", "Cold Call", "Partner"], random=True,
+            "lead_source",
+            "string",
+            values=["Web", "Referral", "Event", "Cold Call", "Partner"],
+            random=True,
         )
         .withColumn(
-            "status", "string", values=["New", "Qualified", "Disqualified", "Converted"], random=True
+            "status",
+            "string",
+            values=["New", "Qualified", "Disqualified", "Converted"],
+            random=True,
         )
         .build()
     )
@@ -2814,8 +2825,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         .withColumn("account_id", "long", minValue=1, maxValue=account_n)
         .withColumn("email", "string", template=r"\\w.\\w@\\w.com")
         .withColumn(
-            "job_title", "string",
-            values=["Manager", "Director", "VP", "Analyst", "Coordinator"], random=True,
+            "job_title",
+            "string",
+            values=["Manager", "Director", "VP", "Analyst", "Coordinator"],
+            random=True,
         )
         .build()
     )
@@ -2827,7 +2840,8 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         .withColumn("account_id", "long", minValue=1, maxValue=account_n)
         .withColumn("competitor_id", "long", minValue=1, maxValue=competitor_n)
         .withColumn(
-            "stage", "string",
+            "stage",
+            "string",
             values=["Prospecting", "Qualification", "Proposal", "Closed Won", "Closed Lost"],
             random=True,
         )
@@ -2851,7 +2865,9 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="crm_activity", rows=activity_n, partitions=96)
         .withColumn("activity_id", "long", minValue=1, maxValue=activity_n, uniqueValues=activity_n)
         .withColumn("contact_id", "long", minValue=1, maxValue=contact_n)
-        .withColumn("activity_type", "string", values=["Call", "Email", "Meeting", "Task"], random=True)
+        .withColumn(
+            "activity_type", "string", values=["Call", "Email", "Meeting", "Task"], random=True
+        )
         .withColumn("occurred_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True)
         .build()
     )
@@ -2999,7 +3015,8 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="hr_department", rows=dept_n, partitions=1)
         .withColumn("department_id", "long", minValue=1, maxValue=dept_n, uniqueValues=dept_n)
         .withColumn(
-            "department_name", "string",
+            "department_name",
+            "string",
             values=["Sales", "Engineering", "Finance", "HR", "Operations", "Marketing"],
             random=True,
         )
@@ -3020,9 +3037,7 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     employee_n = _rows("employee", scale_factor_gb)
     employee = (
         dg.DataGenerator(spark, name="hr_employee", rows=employee_n, partitions=8)
-        .withColumn(
-            "employee_id", "long", minValue=1, maxValue=employee_n, uniqueValues=employee_n
-        )
+        .withColumn("employee_id", "long", minValue=1, maxValue=employee_n, uniqueValues=employee_n)
         .withColumn("department_id", "long", minValue=1, maxValue=dept_n)
         .withColumn("position_id", "long", minValue=1, maxValue=position_n)
         .withColumn("first_name", "string", template=r"\\w")
@@ -3048,7 +3063,8 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="hr_benefit", rows=benefit_n, partitions=1)
         .withColumn("benefit_id", "long", minValue=1, maxValue=benefit_n, uniqueValues=benefit_n)
         .withColumn(
-            "benefit_name", "string",
+            "benefit_name",
+            "string",
             values=["Health", "Dental", "Vision", "401k", "Life Insurance", "Commuter"],
             random=True,
         )
@@ -3068,9 +3084,7 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     time_off_n = _rows("time_off", scale_factor_gb)
     time_off = (
         dg.DataGenerator(spark, name="hr_time_off", rows=time_off_n, partitions=8)
-        .withColumn(
-            "time_off_id", "long", minValue=1, maxValue=time_off_n, uniqueValues=time_off_n
-        )
+        .withColumn("time_off_id", "long", minValue=1, maxValue=time_off_n, uniqueValues=time_off_n)
         .withColumn("employee_id", "long", minValue=1, maxValue=employee_n)
         .withColumn(
             "leave_type", "string", values=["Vacation", "Sick", "Parental", "Unpaid"], random=True
@@ -3369,7 +3383,9 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="support_sla", rows=sla_n, partitions=1)
         .withColumn("sla_id", "long", minValue=1, maxValue=sla_n, uniqueValues=sla_n)
         .withColumn(
-            "sla_name", "string", values=["Standard", "Priority", "Enterprise", "Critical"],
+            "sla_name",
+            "string",
+            values=["Standard", "Priority", "Enterprise", "Critical"],
             random=True,
         )
         .withColumn("response_hours", "int", values=[1, 4, 8, 24], random=True)
@@ -3383,8 +3399,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
             "ticket_category_id", "long", minValue=1, maxValue=category_n, uniqueValues=category_n
         )
         .withColumn(
-            "category_name", "string",
-            values=["Billing", "Technical", "Account", "Feature Request"], random=True,
+            "category_name",
+            "string",
+            values=["Billing", "Technical", "Account", "Feature Request"],
+            random=True,
         )
         .build()
     )
@@ -3768,7 +3786,9 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="iot_device_status", rows=device_n, partitions=8)
         .withColumn("device_id", "long", minValue=1, maxValue=device_n, uniqueValues=device_n)
         .withColumn(
-            "device_type", "string", values=["Thermostat", "Meter", "Camera", "Gateway"],
+            "device_type",
+            "string",
+            values=["Thermostat", "Meter", "Camera", "Gateway"],
             random=True,
         )
         .withColumn("status", "string", values=["Online", "Offline", "Degraded"], random=True)
@@ -3806,9 +3826,7 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         dg.DataGenerator(spark, name="iot_alert", rows=alert_n, partitions=16)
         .withColumn("alert_id", "long", minValue=1, maxValue=alert_n, uniqueValues=alert_n)
         .withColumn("device_id", "long", minValue=1, maxValue=device_n)
-        .withColumn(
-            "severity", "string", values=["Info", "Warning", "Critical"], random=True
-        )
+        .withColumn("severity", "string", values=["Info", "Warning", "Critical"], random=True)
         .withColumn("raised_at", "timestamp", begin="2024-01-01", end="2026-09-27", random=True)
         .build()
     )
@@ -3817,12 +3835,17 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     connectivity_event = (
         dg.DataGenerator(spark, name="iot_connectivity_event", rows=connectivity_n, partitions=16)
         .withColumn(
-            "connectivity_event_id", "long", minValue=1, maxValue=connectivity_n,
+            "connectivity_event_id",
+            "long",
+            minValue=1,
+            maxValue=connectivity_n,
             uniqueValues=connectivity_n,
         )
         .withColumn("device_id", "long", minValue=1, maxValue=device_n)
         .withColumn(
-            "event_type", "string", values=["Connected", "Disconnected", "Reconnected"],
+            "event_type",
+            "string",
+            values=["Connected", "Disconnected", "Reconnected"],
             random=True,
         )
         .withColumn("occurred_at", "timestamp", begin="2024-01-01", end="2026-09-27", random=True)
@@ -3973,8 +3996,10 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
             "campaign_channel_id", "long", minValue=1, maxValue=channel_n, uniqueValues=channel_n
         )
         .withColumn(
-            "channel_name", "string",
-            values=["Email", "Social", "Search", "Display", "Affiliate", "Direct"], random=True,
+            "channel_name",
+            "string",
+            values=["Email", "Social", "Search", "Display", "Affiliate", "Direct"],
+            random=True,
         )
         .build()
     )
@@ -4017,7 +4042,10 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
             spark, name="marketing_conversion_attribution", rows=attribution_n, partitions=4
         )
         .withColumn(
-            "conversion_attribution_id", "long", minValue=1, maxValue=attribution_n,
+            "conversion_attribution_id",
+            "long",
+            minValue=1,
+            maxValue=attribution_n,
             uniqueValues=attribution_n,
         )
         .withColumn("campaign_id", "long", minValue=1, maxValue=campaign_n)
@@ -4086,8 +4114,12 @@ app = func.FunctionApp()
 
 _SEED_DIR = Path(__file__).parent / "seed"
 _TABLES = {
-    "campaign", "campaign_channel", "ad_spend", "email_event",
-    "lead_source", "conversion_attribution",
+    "campaign",
+    "campaign_channel",
+    "ad_spend",
+    "email_event",
+    "lead_source",
+    "conversion_attribution",
 }
 
 
@@ -4228,7 +4260,9 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
         .withColumn("route_id", "long", minValue=1, maxValue=route_n)
         .withColumn("shipped_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True)
         .withColumn(
-            "status", "string", values=["Preparing", "In Transit", "Delivered", "Delayed"],
+            "status",
+            "string",
+            values=["Preparing", "In Transit", "Delivered", "Delayed"],
             random=True,
         )
         .build()
@@ -4249,12 +4283,17 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     inventory_transfer = (
         dg.DataGenerator(spark, name="supply_inventory_transfer", rows=transfer_n, partitions=16)
         .withColumn(
-            "inventory_transfer_id", "long", minValue=1, maxValue=transfer_n,
+            "inventory_transfer_id",
+            "long",
+            minValue=1,
+            maxValue=transfer_n,
             uniqueValues=transfer_n,
         )
         .withColumn("from_warehouse_id", "long", minValue=1, maxValue=warehouse_n)
         .withColumn("to_warehouse_id", "long", minValue=1, maxValue=warehouse_n)
-        .withColumn("transferred_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True)
+        .withColumn(
+            "transferred_at", "timestamp", begin="2018-01-01", end="2026-09-27", random=True
+        )
         .build()
     )
 
@@ -4262,7 +4301,10 @@ def generate_all(spark: SparkSession, scale_factor_gb: float) -> dict[str, DataF
     delivery_exception = (
         dg.DataGenerator(spark, name="supply_delivery_exception", rows=exception_n, partitions=2)
         .withColumn(
-            "delivery_exception_id", "long", minValue=1, maxValue=exception_n,
+            "delivery_exception_id",
+            "long",
+            minValue=1,
+            maxValue=exception_n,
             uniqueValues=exception_n,
         )
         .withColumn("shipment_id", "long", minValue=1, maxValue=shipment_n)
@@ -4385,9 +4427,7 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
 
     calendar_date = (
         dg.DataGenerator(spark, name="ref_calendar_date", rows=4018, partitions=1)  # 2015-2025
-        .withColumn(
-            "date", "date", begin="2015-01-01", end="2026-12-31", interval="1 days"
-        )
+        .withColumn("date", "date", begin="2015-01-01", end="2026-12-31", interval="1 days")
         .withColumn("fiscal_year", "int", expr="year(date)")
         .withColumn("fiscal_quarter", "int", expr="quarter(date)")
         .build()
@@ -4407,8 +4447,10 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
             "product_category_id", "long", minValue=1, maxValue=category_n, uniqueValues=category_n
         )
         .withColumn(
-            "category_name", "string",
-            values=["Electronics", "Furniture", "Apparel", "Food", "Tools"], random=True,
+            "category_name",
+            "string",
+            values=["Electronics", "Furniture", "Apparel", "Food", "Tools"],
+            random=True,
         )
         .build()
     )
@@ -4426,7 +4468,10 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
     exchange_rate = (
         dg.DataGenerator(spark, name="ref_exchange_rate", rows=exchange_rate_n, partitions=1)
         .withColumn(
-            "exchange_rate_id", "long", minValue=1, maxValue=exchange_rate_n,
+            "exchange_rate_id",
+            "long",
+            minValue=1,
+            maxValue=exchange_rate_n,
             uniqueValues=exchange_rate_n,
         )
         .withColumn("from_currency_code", "string", values=_CURRENCIES, random=True)
@@ -4443,7 +4488,9 @@ def generate_all(spark: SparkSession) -> dict[str, DataFrame]:
         dg.DataGenerator(spark, name="ref_unit_of_measure", rows=uom_n, partitions=1)
         .withColumn("unit_of_measure_id", "long", minValue=1, maxValue=uom_n, uniqueValues=uom_n)
         .withColumn(
-            "unit_name", "string", values=["kg", "lb", "each", "box", "pallet", "liter"],
+            "unit_name",
+            "string",
+            values=["kg", "lb", "each", "box", "pallet", "liter"],
             random=True,
         )
         .build()
@@ -4559,9 +4606,7 @@ def run(
     scale_tier: str, platform: Platform, sql_server_fqdn: str, eventhub_namespace_fqdn: str
 ) -> None:
     if scale_tier not in SCALE_FACTOR_GB:
-        raise ValueError(
-            f"scale_tier must be one of {sorted(SCALE_FACTOR_GB)}, got {scale_tier!r}"
-        )
+        raise ValueError(f"scale_tier must be one of {sorted(SCALE_FACTOR_GB)}, got {scale_tier!r}")
     scale_factor_gb = SCALE_FACTOR_GB[scale_tier]
 
     from pyspark.sql import SparkSession
@@ -5056,7 +5101,9 @@ def _passthrough_sql(bronze_name: str) -> str:
     )
 
 
-def _dedup_py(bronze_name: str, output_name: str, business_key: str, *, extra_comment: str = "") -> str:
+def _dedup_py(
+    bronze_name: str, output_name: str, business_key: str, *, extra_comment: str = ""
+) -> str:
     return (
         f"# one output table per file: this is silver.{output_name}\n"
         "#\n"
@@ -5421,7 +5468,16 @@ def test_dim_product_graph_depends_on_silver_erp_product():
     import subprocess
 
     result = subprocess.run(
-        ["uv", "run", "pipetree", "graph", "--config", "pipelines/pipeline.yaml", "--format", "text"],
+        [
+            "uv",
+            "run",
+            "pipetree",
+            "graph",
+            "--config",
+            "pipelines/pipeline.yaml",
+            "--format",
+            "text",
+        ],
         capture_output=True,
         text=True,
     )
@@ -5606,9 +5662,7 @@ def test_fact_sales_resolves_an_unmatched_product_to_the_unknown_member(spark):
         [(1, 100, 999, 2, 10.0)],  # product_id 999 doesn't exist in dim_product
         ["order_line_id", "order_id", "product_id", "quantity", "unit_price"],
     )
-    order_header = spark.createDataFrame(
-        [(100, "2026-01-01")], ["order_id", "order_date"]
-    )
+    order_header = spark.createDataFrame([(100, "2026-01-01")], ["order_id", "order_date"])
     dim_product = spark.createDataFrame([(1, "SKU-1")], ["product_id", "sku"])
 
     result = _run_logic_file(
@@ -5664,12 +5718,8 @@ address = spark.table("silver.erp_address")  # noqa: F821
 geography = spark.table("gold.dim_geography")  # noqa: F821
 
 with_customer = fact_sales.join(order_header, "order_id", "left")
-with_address = with_customer.join(
-    address, order_header.customer_id == address.customer_id, "left"
-)
-with_region = with_address.join(
-    geography, address.country_code == geography.country_code, "left"
-)
+with_address = with_customer.join(address, order_header.customer_id == address.customer_id, "left")
+with_region = with_address.join(geography, address.country_code == geography.country_code, "left")
 
 result = (
     with_region.withColumn("revenue_month", F.date_trunc("month", order_header.order_date))
@@ -5751,7 +5801,16 @@ def test_pipeline_validates_end_to_end_bronze_through_mart():
 
 def test_mart_tables_appear_as_leaves_in_the_dependency_graph():
     result = subprocess.run(
-        ["uv", "run", "pipetree", "graph", "--config", "pipelines/pipeline.yaml", "--format", "text"],
+        [
+            "uv",
+            "run",
+            "pipetree",
+            "graph",
+            "--config",
+            "pipelines/pipeline.yaml",
+            "--format",
+            "text",
+        ],
         capture_output=True,
         text=True,
     )
@@ -5823,7 +5882,9 @@ _LOGANALYTICS_RESOURCE = "https://api.loganalytics.io/"
 
 
 def main() -> int:
-    dbutils = globals()["dbutils"]  # injected by the Databricks runtime, same reasoning as pipetree's own example
+    dbutils = globals()[
+        "dbutils"
+    ]  # injected by the Databricks runtime, same reasoning as pipetree's own example
 
     spark = SparkSession.getActiveSession()
     if spark is None:
@@ -6210,7 +6271,9 @@ def write_report(
     output_path: str,
 ) -> None:
     failures_note = (
-        f" ({', '.join(correctness.unexpected_failures)})" if correctness.unexpected_failures else ""
+        f" ({', '.join(correctness.unexpected_failures)})"
+        if correctness.unexpected_failures
+        else ""
     )
     lines = [
         f"# Load test report - {scale_tier} (_execution_id={execution_id})",
@@ -6223,7 +6286,10 @@ def write_report(
         "## Performance",
         f"- Total duration: {performance.total_duration_ms / 1000:.1f}s",
         "- By layer:",
-        *[f"  - {layer}: {ms / 1000:.1f}s" for layer, ms in sorted(performance.by_layer_ms.items())],
+        *[
+            f"  - {layer}: {ms / 1000:.1f}s"
+            for layer, ms in sorted(performance.by_layer_ms.items())
+        ],
         "",
         "## Cost",
         f"- ${cost_usd:.2f}",

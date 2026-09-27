@@ -62,6 +62,9 @@ class DatabricksPlatform:
     def run_metadata(self) -> dict[str, str]:
         return dict(self._run_metadata)
 
+    def acquire_token(self, resource: str) -> str:
+        raise NotImplementedError("acquire_token is not yet implemented for DatabricksPlatform")
+
 
 def _dbutils_secret_resolver(dbutils: Any, secret_scope: str) -> Callable[[str], str]:
     def resolver(name: str) -> str:

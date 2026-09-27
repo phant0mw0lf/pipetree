@@ -31,6 +31,9 @@ class _FakePlatform:
     def run_metadata(self) -> dict[str, str]:
         return {}
 
+    def acquire_token(self, resource: str) -> str:
+        return "fake-token"
+
 
 def test_platform_protocol_is_satisfied_by_duck_typing():
     assert isinstance(_FakePlatform(), Platform)

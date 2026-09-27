@@ -41,6 +41,12 @@ class Platform(Protocol):
         to the job that produced it."""
         ...
 
+    def acquire_token(self, resource: str) -> str:
+        """Acquire a short-lived AAD access token scoped to `resource`
+        (e.g. 'https://database.windows.net/') via this platform's own
+        identity - a managed identity, never a stored secret."""
+        ...
+
 
 def detect() -> str:
     """Best-effort runtime detection: 'databricks', 'fabric', or 'local'.
