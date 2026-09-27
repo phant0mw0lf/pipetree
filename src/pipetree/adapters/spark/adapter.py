@@ -1,11 +1,11 @@
 """SparkAdapter: the Adapter protocol, backed by Spark + Delta.
 
-Reading a `source` table's raw input goes through a small, swappable
-`read_source` callable rather than the full `SourceReader` registry
-(sqlserver, kusto, storage_stream, custom) - that registry is Phase D. The
-default here reads a local file (csv/json/parquet) so the example project
-and its demo run don't need a real system to talk to; pass a different
-`read_source` to plug in something else in the meantime.
+Reading a `source` table's raw input goes through the `pipetree.sources`
+registry, keyed on `systems.<name>.type` - csv/json/parquet, sqlserver,
+kusto, storage_stream (plus its d365_export/synapse_link aliases), or a
+`custom` dotted-path class. Pass `read_source` to bypass the registry
+entirely with your own callable instead (tests use this; so could a
+one-off table that doesn't fit the registry).
 """
 
 from __future__ import annotations
@@ -26,8 +26,11 @@ from pipetree.adapters.spark.merge import (
     seed_unknown_member,
 )
 from pipetree.model import System, Table
-from pipetree.platform.base import Platform, resolve_value
+from pipetree.platform.base import Platform
 from pipetree.platform.local import LocalPlatform
+from pipetree.sources import get_reader
+from pipetree.sources.base import SourceContext
+from pipetree.sources.custom import load_custom_reader
 
 MergeFn = Callable[[SparkSession, Table, DataFrame, int, "str | None", bool], dict]
 ReadSourceFn = Callable[[Table, System], DataFrame]
@@ -38,8 +41,6 @@ _MERGE_FUNCTIONS: dict[str, MergeFn] = {
     "replace": merge_replace,
     "append": merge_append,
 }
-
-_LOCAL_FILE_TYPES = {"csv", "json", "parquet"}
 
 
 class SparkAdapter:
@@ -57,14 +58,17 @@ class SparkAdapter:
         self._systems = systems
         self._base_dir = Path(base_dir)
         self._platform = platform or LocalPlatform()
-        self._read_source = read_source or self._read_local_file_source
+        self._read_source_override = read_source
 
     def run_table(
         self, table: Table, *, execution_id: int, init: bool = False
     ) -> dict[str, Any] | None:
         if table.source is not None:
             system = self._systems[table.source.system]
-            source_df = self._read_source(table, system)
+            if self._read_source_override is not None:
+                source_df = self._read_source_override(table, system)
+            else:
+                source_df = self._read_via_registry(table, system, init)
             source_system = table.source.system
         else:
             source_df = self._run_logic(table)
@@ -82,6 +86,18 @@ class SparkAdapter:
         if not self._spark.catalog.tableExists(table.fqn):
             return
         DeltaTable.forName(self._spark, table.fqn).delete(f"_execution_id = {execution_id}")
+
+    def _read_via_registry(self, table: Table, system: System, init: bool) -> DataFrame:
+        if system.type == "custom":
+            class_path = getattr(system, "class", None)
+            if not class_path:
+                raise ValueError(f"{table.fqn}: system type 'custom' requires a 'class' property")
+            reader = load_custom_reader(class_path)
+        else:
+            reader = get_reader(system.type)
+
+        ctx = SourceContext(self._spark, table, system, self._platform, self._base_dir, init=init)
+        return reader.read(ctx)
 
     def _run_logic(self, table: Table) -> DataFrame:
         if table.logic is None:
@@ -108,25 +124,3 @@ class SparkAdapter:
                 f"{path}: a PySpark logic file must assign its output DataFrame to `result`"
             )
         return result
-
-    def _read_local_file_source(self, table: Table, system: System) -> DataFrame:
-        if system.type not in _LOCAL_FILE_TYPES:
-            raise NotImplementedError(
-                f"{table.fqn}: system type {system.type!r} has no reader yet - sqlserver, "
-                "kusto, storage_stream and custom sources land in a later phase. Pass a "
-                "read_source callable to SparkAdapter to supply one in the meantime."
-            )
-
-        raw_path = getattr(system, "path", None)
-        if not raw_path:
-            raise ValueError(f"{table.fqn}: system type {system.type!r} requires a 'path' property")
-
-        # `path` is a literal or a `{secret: name}` reference, per the same
-        # schema rule as every other connection property.
-        relative_path = resolve_value(raw_path, self._platform)
-        resolved_path = self._platform.resolve_path(relative_path, self._base_dir)
-
-        reader = self._spark.read
-        if system.type == "csv":
-            reader = reader.option("header", "true").option("inferSchema", "true")
-        return reader.format(system.type).load(resolved_path)

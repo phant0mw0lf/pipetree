@@ -19,6 +19,14 @@ def make_table(**overrides) -> Table:
     return Table.model_validate(defaults)
 
 
+class FakeCustomSourceReader:
+    """A stand-in for a customer's own SourceReader (e.g. for Microsoft
+    Graph), loaded by dotted path from `systems.<name>.class`."""
+
+    def read(self, ctx):
+        return ctx.spark.createDataFrame([(1, "FromCustomReader")], ["id", "name"])
+
+
 class FakePlatform:
     """Records what it's asked to resolve, so tests can prove the adapter
     actually consults the platform rather than working around it."""
@@ -104,14 +112,34 @@ def test_run_table_reads_a_source_table_via_read_source_and_merges(spark, tmp_pa
     assert {r["_source_system"] for r in written.collect()} == {"crm"}
 
 
+def test_run_table_dispatches_a_custom_system_type_by_dotted_class(spark, tmp_path):
+    system = System.model_validate(
+        {
+            "type": "custom",
+            "class": "tests.adapters.spark.test_adapter.FakeCustomSourceReader",
+        }
+    )
+    table = make_table(
+        source={"system": "graph", "object": "whatever"},
+        strategy="replace",
+        fqn="bronze_custom.whatever",
+    )
+    adapter = SparkAdapter(spark, systems={"graph": system}, base_dir=tmp_path)
+
+    result = adapter.run_table(table, execution_id=1)
+
+    assert result is not None
+    assert spark.table(table.fqn).collect()[0]["name"] == "FromCustomReader"
+
+
 def test_run_table_raises_a_clear_error_for_an_unsupported_system_type(spark, tmp_path):
-    system = System(type="sqlserver")
+    system = System(type="carrier_pigeon")
     table = make_table(
         source={"system": "hr", "object": "employee"}, strategy="scd1", fqn="bronze_b.employee"
     )
     adapter = SparkAdapter(spark, systems={"hr": system}, base_dir=tmp_path)
 
-    with pytest.raises(NotImplementedError, match="sqlserver"):
+    with pytest.raises(KeyError, match="carrier_pigeon"):
         adapter.run_table(table, execution_id=1)
 
 

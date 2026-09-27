@@ -11,10 +11,10 @@ series. Part 1 covers the design and the YAML schema; part 2 covers the
 executor this repo implements (multithreading, retries, failure handling).
 
 Status: Phase A (part 2's core), Phase B (selection, subtree closure, tree
-rendering) and Phase C (the platform seam, a Databricks Asset Bundle, a
-Fabric notebook) are built. Phase C is **not yet verified against a real
-workspace** - see `examples/databricks/README.md` and
-`examples/fabric/README.md`. See `docs/build-order.md` for what's next.
+rendering), Phase C (the platform seam, a Databricks Asset Bundle, a
+Fabric notebook) and Phase D (source readers) are built. Phase C is **not
+yet verified against a real workspace** - see `examples/databricks/README.md`
+and `examples/fabric/README.md`. See `docs/build-order.md` for what's next.
 
 ## Prerequisites
 
@@ -91,6 +91,14 @@ See the blog series for the full design rationale. In short:
   Fabric and Databricks run on - with `scd1`/`scd2`/`replace`/`append` all
   implemented against Delta's merge builder. With no active SparkSession it
   builds a local one; on a real cluster it reuses the one already running.
+- **Sources** (`pipetree.sources`) read a `source` table's raw input,
+  keyed on `systems.<name>.type`: `csv`/`json`/`parquet` (local files, the
+  example project's stand-in for a real connector), `sqlserver` (JDBC),
+  `kusto`, `storage_stream` (Structured Streaming with
+  `Trigger.AvailableNow`, so an always-on stream becomes a bounded unit of
+  work the executor can run once and finish - `d365_export` and
+  `synapse_link` are aliases of it) and `custom` (a dotted-path class you
+  bring yourself, e.g. for Microsoft Graph).
 - **Platforms** (`pipetree.platform`) answer "where am I running?" for
   secrets, table naming, storage paths and run metadata - `LocalPlatform`
   (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret
@@ -107,7 +115,8 @@ See the blog series for the full design rationale. In short:
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
 parameters, the `append` retry rule, two real Spark/Delta bugs, the
-platform seam) made while building this.
+platform seam, making `Trigger.AvailableNow` behave) made while building
+this.
 
 ## Running on Databricks or Fabric
 

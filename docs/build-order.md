@@ -20,9 +20,15 @@ add adapters and features behind seams the core already defines.
       `examples/fabric/README.md` for exactly what to check. That
       verification round (deploy both, report back what breaks) is next,
       and doesn't block Phase D.
-- [ ] **Phase D — sources**: `SourceReader` registry, `sqlserver`,
-      `storage_stream` (Structured Streaming with `Trigger.AvailableNow`,
-      Auto Loader on Databricks), `kusto`, `custom` class-by-name loader.
+- [x] **Phase D — sources**: `SourceReader` registry (csv/json/parquet,
+      `sqlserver`, `kusto`, `storage_stream` + its `d365_export`/
+      `synapse_link` aliases, `custom` dotted-path loading). `SparkAdapter`
+      now dispatches through it instead of hardcoding local-file reads.
+      `storage_stream`'s non-Databricks path (`Trigger.AvailableNow`,
+      checkpointing, `--init` resetting it) is verified for real, locally;
+      its Auto Loader branch, and `sqlserver`/`kusto`'s option-building,
+      are tested against hand-written fakes - there's no real SQL Server,
+      Kusto cluster, or Databricks storage account here to connect to.
 - [ ] **Phase E — schema drift**: inference, diff, `evolve | fail | ignore`
       policies.
 - [ ] **Phase F — declarative pipelines**: AUTO CDC translation for

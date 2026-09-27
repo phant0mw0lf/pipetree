@@ -219,3 +219,61 @@ called out explicitly in each README (`dbutils` availability in a
 version pinned in `databricks.yml`). This is the handoff point: the
 verification round is David deploying both and reporting back what
 breaks, not something to fake confidence about here.
+
+## Phase D: sources
+
+**`Trigger.AvailableNow` needs a sink to actually run, which took some
+working out.** `Trigger.AvailableNow` is a write-side concept - it's how a
+`writeStream` decides when to stop, not something a `readStream` has on
+its own - so getting a plain batch DataFrame back out of "read what's new
+since last time" means actually running a streaming query end to end, not
+just building a lazy read. `StorageStreamSource` streams new files into a
+staging Delta location with `Trigger.AvailableNow`, waits for it to
+finish, then hands back a batch read of that staging location - the rest
+of pipetree never sees a streaming DataFrame. Two things about that
+staging location weren't obvious until the tests actually ran:
+
+- The staging table has to be cleared *every run*, not just on `init`.
+  Otherwise it accumulates every batch ever written, and a table that's
+  supposed to see "just what's new" ends up re-merging its entire history
+  each time. Clearing staging doesn't touch the checkpoint - the
+  checkpoint is what actually remembers cross-run progress; staging is
+  just this run's inbox.
+- A run with nothing new to process never initializes the sink at all -
+  no exception, just no Delta table at the staging path. Reading it back
+  with a plain `spark.read.format("delta").load(...)` throws
+  `PATH_NOT_FOUND` if you don't check for this first. The fix is
+  `DeltaTable.isDeltaTable(...)` before reading, falling back to an empty
+  DataFrame with the stream's own schema.
+
+This is genuinely tested end to end locally (real files, real Spark, real
+`Trigger.AvailableNow`) for the non-Databricks path - Auto Loader
+(`cloudFiles`) is written against Databricks' documented options but
+untested, same caveat as the rest of Phase C.
+
+**`sqlserver` and `kusto` are tested without a JVM at all.** Both only
+ever call `ctx.spark.read.format(...).option(...).load()` through duck
+typing, so a hand-written fake `DataFrameReader` is enough to verify the
+JDBC url / Kusto connector options they build, with no real database or
+cluster to connect to regardless. These are some of the fastest tests in
+the suite and don't need the `spark` marker - a nice side effect of
+keeping the reader's job narrowly "build the right read call" rather than
+"connect and prove it works," which isn't something this environment
+could verify anyway.
+
+**`custom` needed nothing built, on purpose.** `pipetree.sources.custom`
+is a pure bring-your-own-reader seam - `load_custom_reader()` dynamically
+imports whatever class `systems.<name>.class` points at and checks it
+satisfies the `SourceReader` protocol. No concrete Graph/SharePoint
+reader ships, and none should: that's a real implementation David would
+write against a real tenant, using the Python Data Source API path from
+part 1, not something to fake here.
+
+**`d365_export` and `synapse_link` are literally the same reader
+instance as `storage_stream`**, registered under three names. The plan
+called these "thin wrappers, not separate subsystems," and once
+`storage_stream` existed there was nothing left to wrap - all three are
+"files landing in a storage account, streamed in with `Trigger.AvailableNow`."
+If a real deployment needs source-specific behavior (Synapse Link's
+delete-flagged rows, say), that's a difference in the *config* for that
+table (`delete_when`), not a reason for a separate reader class.
