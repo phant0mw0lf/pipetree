@@ -19,11 +19,12 @@ hand-waved claim.
 
 **Non-goals:** changing pipetree itself (this is purely a consumer of
 what's already built - if it uncovers a real bug, that's a pipetree
-fix tracked separately, not a reason to redesign this harness); a
-polished, reusable "load testing framework" for arbitrary packages;
-covering every possible Azure service (the topology below is
-deliberately bounded to what exercises pipetree's existing source
-types).
+fix tracked separately, not a reason to redesign this harness), **with
+one deliberate exception** for token-based authentication - see
+"Authentication" below; a polished, reusable "load testing framework"
+for arbitrary packages; covering every possible Azure service (the
+topology below is deliberately bounded to what exercises pipetree's
+existing source types).
 
 ## Repository
 
@@ -40,7 +41,7 @@ subscription. Even with OpenTofu state kept entirely out of git (a
 remote backend, never local state files), `.tfvars` files and module
 outputs tend to accumulate subscription/tenant/resource-naming details
 that are easy to miss before a public push. This is different from
-pipetree, which *is* the thing being open-sourced; this is validation
+pipetree, which _is_ the thing being open-sourced; this is validation
 tooling around it. Nothing prevents making it public later once
 confirmed clean of anything subscription-specific - that direction is
 reversible, the other isn't.
@@ -69,18 +70,18 @@ pipetree-scale-bench/
 ~10 systems, ~100 tables, each mapped to whichever real Azure service
 lets it exercise a specific pipetree source type:
 
-| System | Source type(s) | Real service | Tables (~) | Domain |
-|---|---|---|---|---|
-| `erp` | `d365_export` | ADLS Gen2 (files) | 10 | Sales orders, GL, inventory, vendors |
-| `crm` | `synapse_link` | ADLS Gen2 (files) | 10 | Accounts, contacts, opportunities, cases |
-| `hr` | `sqlserver` | Azure SQL DB, schema `hr` | 8 | Employees, departments, payroll |
-| `finance` | `sqlserver` | Azure SQL DB, schema `finance` | 8 | Invoices, payments, budgets |
-| `support` | `sqlserver` | Azure SQL DB, schema `support` | 6 | Tickets, SLAs, agents |
-| `web_events` | `kusto` **and** `storage_stream` | Event Hub → Log Analytics Workspace (hot path) **and** → ADLS via Event Hub Capture (cold path) | 6 | Clickstream, sessions |
-| `iot_telemetry` | `kusto` **and** `storage_stream` | Event Hub → Log Analytics Workspace **and** → ADLS via Capture | 6 | Device/sensor readings |
-| `marketing` | `custom` | Azure Function (Consumption), a tiny mock REST API | 6 | Campaigns, ad spend, email events |
-| `supply_chain` | `storage_stream` | ADLS Gen2 (files) | 8 | Shipments, warehouses, purchase orders |
-| `reference` | `csv` | ADLS Gen2 (files) | 8 | Currencies, calendar, product/org hierarchy |
+| System          | Source type(s)                   | Real service                                                                                    | Tables (~) | Domain                                      |
+| --------------- | -------------------------------- | ----------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------- |
+| `erp`           | `d365_export`                    | ADLS Gen2 (files)                                                                               | 10         | Sales orders, GL, inventory, vendors        |
+| `crm`           | `synapse_link`                   | ADLS Gen2 (files)                                                                               | 10         | Accounts, contacts, opportunities, cases    |
+| `hr`            | `sqlserver`                      | Azure SQL DB, schema `hr`                                                                       | 8          | Employees, departments, payroll             |
+| `finance`       | `sqlserver`                      | Azure SQL DB, schema `finance`                                                                  | 8          | Invoices, payments, budgets                 |
+| `support`       | `sqlserver`                      | Azure SQL DB, schema `support`                                                                  | 6          | Tickets, SLAs, agents                       |
+| `web_events`    | `kusto` **and** `storage_stream` | Event Hub → Log Analytics Workspace (hot path) **and** → ADLS via Event Hub Capture (cold path) | 6          | Clickstream, sessions                       |
+| `iot_telemetry` | `kusto` **and** `storage_stream` | Event Hub → Log Analytics Workspace **and** → ADLS via Capture                                  | 6          | Device/sensor readings                      |
+| `marketing`     | `custom`                         | Azure Function (Consumption), a tiny mock REST API                                              | 6          | Campaigns, ad spend, email events           |
+| `supply_chain`  | `storage_stream`                 | ADLS Gen2 (files)                                                                               | 8          | Shipments, warehouses, purchase orders      |
+| `reference`     | `csv`                            | ADLS Gen2 (files)                                                                               | 8          | Currencies, calendar, product/org hierarchy |
 
 Total: ~76 base tables; the two `kusto`/`storage_stream` doubled systems
 (`web_events`, `iot_telemetry` each counted once above but readable two
@@ -94,7 +95,7 @@ service per system - cheaper, and realistic: consolidating multiple
 line-of-business systems onto shared infrastructure is exactly what
 real organizations do.
 
-`web_events`/`iot_telemetry` reading the *same* underlying stream two
+`web_events`/`iot_telemetry` reading the _same_ underlying stream two
 ways (`kusto` against Log Analytics, `storage_stream` against the
 Capture output in ADLS) is deliberate: it's a real side-by-side
 correctness check between two of pipetree's source types against
@@ -154,16 +155,19 @@ across all ~100 tables - real data never distributes evenly either:
   volume, growing with scale but far more slowly than the huge class.
 - **Small** (remaining ~5%, ~35 tables: `hr`, `reference`, `marketing`)
   - fixed row counts (roughly 1K-100K rows) regardless of scale factor.
-  Dimension and reference data doesn't grow 2000x just because the
-  event stream did, and `marketing`'s mock API specifically never
-  serves TB-scale payloads - real REST APIs don't either.
+    Dimension and reference data doesn't grow 2000x just because the
+    event stream did, and `marketing`'s mock API specifically never
+    serves TB-scale payloads - real REST APIs don't either.
 
 **Destinations**, per system: `hr`/`finance`/`support` write via JDBC to
 Azure SQL DB; `erp`/`crm`/`supply_chain`/`reference` write as files to
 ADLS Gen2; `web_events`/`iot_telemetry` are produced onto Event Hub,
 which fans out to Log Analytics (via Data Collection Rules) and to ADLS
 (via Event Hub Capture); `marketing`'s small fixed dataset seeds the
-mock Function once.
+mock Function once. The generation job authenticates to Azure SQL DB
+and Event Hub the same identity-based way pipetree itself does when
+reading them back later - see "Authentication" - so no credential
+exists that's only used once and then forgotten about.
 
 **Generation is a separate, resumable step from running pipetree.**
 Each scale tier's data is generated once, real money and time, and then
@@ -215,34 +219,112 @@ torn down (`tofu destroy`, or at minimum pausing the SQL DB, stopping
 the Databricks cluster, and pausing the Fabric capacity) before moving
 on. Nothing runs unattended at 1TB/10TB scale.
 
+## Authentication
+
+**Policy: no long-lived secrets.** Nothing in this project stores a
+connection string, account key, SAS token, client secret, or SQL
+password anywhere - not in Key Vault, not in OpenTofu state, not in a
+`pipeline.yaml`. Every connection authenticates as a managed identity
+and acquires a short-lived token at run time instead. This carries
+forward the same principle already applied to `DatabricksPlatform`'s
+secret resolution (Unity-Catalog-backed, Access-Connector-first, no
+legacy Key-Vault-backed scope) and extends it to every real service
+this project touches, not just pipetree's own secret-resolution seam.
+
+Per service:
+
+- **ADLS Gen2, from Databricks**: a Unity Catalog storage credential
+  backed by an **Access Connector for Azure Databricks** (a
+  system-assigned managed identity), granted Storage Blob Data
+  Contributor on the storage account. Already implied by the `storage`
+  module's Unity Catalog external location; stated explicitly here so
+  no one reaches for a SAS token instead.
+- **ADLS Gen2, from Fabric (the OneLake shortcut)**: the Fabric
+  workspace's **workspace identity**, granted Storage Blob Data Reader
+  on the storage account - not a SAS token or account key.
+- **Azure SQL Database**: Entra-ID-only authentication (SQL/password
+  logins disabled at the server level). Databricks acquires a
+  short-lived AAD token scoped to `https://database.windows.net/`
+  through a named **Unity Catalog service credential** backed by the
+  Access Connector above (`dbutils.credentials.getServiceCredentialsFor(...)`),
+  passed to the JDBC driver's `accessToken` option in place of
+  `user`/`password`.
+- **Log Analytics Workspace (Kusto Spark connector)**: the same
+  service-credential mechanism, with the token scoped to the
+  Log-Analytics/Kusto resource, passed through the connector's AAD-token
+  option in place of `kustoAadAppId`/`kustoAadAppSecret`. See "Open
+  risks" for whether the pinned connector version actually supports
+  this.
+- **Event Hub**: the Access Connector's managed identity (Databricks)
+  and the workspace identity (Fabric, and the dbldatagen generation job)
+  are each granted the `Azure Event Hubs Data Sender`/`Data Receiver`
+  role via RBAC, authenticating over AAD OAuth rather than a SAS
+  connection string.
+- **Azure Function (the marketing mock API)**: Entra ID built-in
+  authentication (Easy Auth), validating the caller's managed-identity
+  token - no function key.
+- **OpenTofu itself**: authenticates to Azure via the operator's own
+  Azure AD login (`az login` locally, OIDC federation in CI) - never a
+  stored service-principal secret.
+
+**The one pipetree change this requires.** `sqlserver.py` and
+`kusto.py` currently only support secret-based auth
+(`auth.user`/`auth.password`; `auth.appId`/`auth.appSecret`) - there is
+no token-based mode to route through. Making this project genuinely
+secretless means adding one, in pipetree itself, before `runners/`
+starts using it:
+
+- A new `Platform.acquire_token(resource: str) -> str` method on the
+  platform seam, alongside the existing `resolve_secret`.
+  `DatabricksPlatform` implements it via a named Unity Catalog service
+  credential; `FabricPlatform` via
+  `notebookutils.credentials.getToken(...)` against the workspace
+  identity; `LocalPlatform` via `DefaultAzureCredential` (the
+  operator's own `az login`), so the dev-tier loop is exercised the
+  same secretless way.
+- An `auth.mode: aad_token` option on both `SqlServerSource` and
+  `KustoSource`, calling `acquire_token` instead of resolving a static
+  secret when set. The existing secret-based modes stay as the
+  fallback path for anyone without managed-identity infrastructure
+  available - this is additive, not a breaking change.
+
+This lands as its own small, reviewed pipetree PR - tests and all,
+same as any other pipetree change - not code duplicated inside
+`pipetree-scale-bench`. It's the one explicit exception to this
+project's "no changes to pipetree" non-goal, made because there's no
+way to honor "secretless where possible" otherwise.
+
 ## Execution
 
-**No changes to pipetree.** One set of `pipeline.yaml` table
-definitions (shared across scale tiers via a small generator script or
-YAML anchors, since only data volume changes between tiers, not schema)
-describes all ~100 tables using pipetree's existing schema exactly as
-designed.
+One set of `pipeline.yaml` table definitions (shared across scale tiers
+via a small generator script or YAML anchors, since only data volume
+changes between tiers, not schema) describes all ~100 tables using
+pipetree's existing schema, plus the `auth.mode: aad_token` addition
+above.
 
 **Databricks run** reuses the pattern from pipetree's own
 `examples/databricks/`: a Databricks Asset Bundle with a
 `spark_python_task`, `DatabricksPlatform` wired to the real Unity
-Catalog catalog and a Unity-Catalog-backed secret scope, sized to a real
-job cluster matching the scale tier.
+Catalog catalog and the Access-Connector-backed service credential
+described above - a secret scope is no longer the primary path, only a
+fallback for anything that genuinely has no managed-identity option.
 
 **Fabric run** reuses the pattern from `examples/fabric/`: a notebook,
-`FabricPlatform` wired to a real Key Vault, reading the identical lake
-data via the OneLake shortcut Databricks also reads.
+`FabricPlatform` wired to the workspace identity for token acquisition
+(Key Vault only as a fallback, same as Databricks), reading the
+identical lake data via the OneLake shortcut Databricks also reads.
 
 Both platforms are expected to produce the **same** bronze-through-mart
-output from the same YAML - that comparison *is* the validation parts
+output from the same YAML - that comparison _is_ the validation parts
 3/4 of the blog series want, not a side effect of this project.
 
 This is also the first real-workspace exercise of the `sqlserver` and
 `kusto` readers, and of `DatabricksPlatform`/`FabricPlatform` themselves
+
 - expect to find and fix real issues here that no fake could have
-caught, particularly around JDBC connection specifics and the exact
-cluster URI format for querying a Log Analytics Workspace through the
-Kusto Spark connector (see "Open risks").
+  caught, particularly around JDBC connection specifics and the exact
+  cluster URI format for querying a Log Analytics Workspace through the
+  Kusto Spark connector (see "Open risks").
 
 ## Validation & reporting
 
@@ -293,6 +375,21 @@ scaling up a broken pipeline just makes the bug more expensive to find.
   than a standalone ADX cluster's URI - `KustoSource` should work
   unchanged once that URI is used as `cluster`, but this hasn't been
   tried against a real workspace yet.
+- **Whether the pinned Kusto Spark connector version supports
+  AAD-token/managed-identity auth** against a Log Analytics Workspace
+  resource, rather than only app-secret or device-code auth, needs
+  checking against the connector's current docs. If it doesn't, the
+  fallback is a short-lived token minted via `acquire_token` and passed
+  through whatever raw-bearer-token option the connector exposes, or,
+  only as a last resort, a scoped app registration whose secret lives
+  in Key Vault and is read through the existing `resolve_secret` seam -
+  never a stored secret if a token path is available.
+- **Databricks Unity Catalog service credentials** (the
+  `dbutils.credentials.getServiceCredentialsFor(...)` mechanism this
+  design leans on for Azure SQL/Log Analytics token acquisition) is a
+  newer UC feature - confirm it's available and GA on whatever
+  Databricks workspace this project targets before building the
+  `acquire_token` implementation around it.
 - **Whether to provision a new Databricks workspace or reuse an
   existing one** is left as a variable in the `databricks` module
   rather than decided here.
