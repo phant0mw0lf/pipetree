@@ -4709,6 +4709,17 @@ def test_build_bronze_tables_covers_every_erp_table():
         assert f"erp_{spec.table_name}" in tables
 
 
+def test_build_bronze_tables_uses_the_business_key_override_for_sales_order_header():
+    # generation/erp.py's real primary key column is `order_id`, not the
+    # mechanical `sales_order_header_id` the {table}_id pattern would
+    # otherwise guess - see _BUSINESS_KEY_OVERRIDES.
+    from scripts.build_pipeline_yaml import build_bronze_tables
+
+    tables = build_bronze_tables()
+
+    assert tables["erp_sales_order_header"]["business_key"] == ["order_id"]
+
+
 def test_build_bronze_tables_doubles_web_events_tables():
     from generation.web_events import TABLES as WEB_EVENTS_TABLES
     from scripts.build_pipeline_yaml import build_bronze_tables
@@ -4786,6 +4797,24 @@ _DOUBLED_SYSTEMS = {
     "iot_telemetry": (iot_telemetry, "kusto", "storage_stream"),
 }
 
+# A handful of tables' real business key doesn't mechanically match
+# `{table}_id` - real systems don't always name things that neatly (a
+# "sales_order_header" table's natural key is `order_id`, not
+# `sales_order_header_id`; a survey table generated as `survey_id`
+# rather than the fully-spelled-out table name). Listed explicitly
+# rather than silently guessed wrong.
+_BUSINESS_KEY_OVERRIDES = {
+    "erp_sales_order_header": "order_id",
+    "erp_sales_order_line": "order_line_id",
+    "hr_performance_review": "review_id",
+    "support_customer_satisfaction_survey": "survey_id",
+}
+
+
+def _business_key_for(system_name: str, table_name: str, key_pattern: str) -> str:
+    override = _BUSINESS_KEY_OVERRIDES.get(f"{system_name}_{table_name}")
+    return override if override is not None else key_pattern.format(table=table_name)
+
 
 def build_systems_block() -> dict:
     systems: dict = {}
@@ -4808,7 +4837,9 @@ def build_bronze_tables() -> dict:
                 "strategy": "replace" if key_pattern is None else "scd1",
             }
             if key_pattern is not None:
-                entry["business_key"] = [key_pattern.format(table=spec.table_name)]
+                entry["business_key"] = [
+                    _business_key_for(system_name, spec.table_name, key_pattern)
+                ]
             tables[table_name] = entry
 
     for system_name, (module, _kusto_type, _stream_type) in _DOUBLED_SYSTEMS.items():
@@ -4862,11 +4893,13 @@ git add scripts/build_pipeline_yaml.py pipelines/pipeline.yaml tests/scripts/tes
 git commit -m "feat(pipelines): generate bronze + systems from generation/* registries"
 ```
 
-### Task 30: Silver layer — generated cleansing pass, one table per source
+### Task 30: Silver layer — a real mix of SQL and PySpark, one table per source
+
+Not uniform: `erp`/`crm`/`supply_chain`/`marketing` get a plain SQL filter (their generated data has no realistic duplicate-delivery story); `hr`/`finance`/`support` and both doubled systems (`web_events`, `iot_telemetry`) get a PySpark window-function dedup, because their real-world sources - retried writes, at-least-once Event Hub delivery - genuinely can carry more than one row per business key in a batch. This is a real technical distinction driving the split, not an arbitrary alternation - matching how a real environment actually ends up with both.
 
 **Files:**
 - Modify: `scripts/build_pipeline_yaml.py`
-- Create: `pipelines/notebooks/silver/` (generated `.sql` files, committed)
+- Create: `pipelines/notebooks/silver/` (generated `.sql` and `.py` files, committed)
 - Test: `tests/scripts/test_build_pipeline_yaml.py` (append)
 
 **Interfaces:**
@@ -4877,7 +4910,7 @@ git commit -m "feat(pipelines): generate bronze + systems from generation/* regi
 Append:
 
 ```python
-def test_build_silver_tables_covers_every_single_path_system_table():
+def test_build_silver_tables_uses_sql_for_erp():
     from generation.erp import TABLES as ERP_TABLES
     from scripts.build_pipeline_yaml import build_silver_tables
 
@@ -4889,7 +4922,29 @@ def test_build_silver_tables_covers_every_single_path_system_table():
         assert entry["depends_on"] == "auto"
 
 
-def test_build_silver_tables_names_doubled_systems_without_a_read_path_suffix():
+def test_build_silver_tables_uses_python_for_hr():
+    from generation.hr import TABLES as HR_TABLES
+    from scripts.build_pipeline_yaml import build_silver_tables
+
+    tables = build_silver_tables()
+
+    for spec in HR_TABLES:
+        entry = tables[f"hr_{spec.table_name}"]
+        assert entry["logic"] == f"notebooks/silver/hr_{spec.table_name}.py"
+
+
+def test_build_silver_tables_uses_the_business_key_override_for_performance_review():
+    # generation/hr.py's real primary key column is `review_id`, not the
+    # mechanical `performance_review_id` the {table}_id pattern would
+    # otherwise guess.
+    from scripts.build_pipeline_yaml import build_silver_tables
+
+    tables = build_silver_tables()
+
+    assert tables["hr_performance_review"]["business_key"] == ["review_id"]
+
+
+def test_build_silver_tables_names_doubled_systems_as_python_without_a_read_path_suffix():
     from generation.web_events import TABLES as WEB_EVENTS_TABLES
     from scripts.build_pipeline_yaml import build_silver_tables
 
@@ -4897,10 +4952,10 @@ def test_build_silver_tables_names_doubled_systems_without_a_read_path_suffix():
 
     for spec in WEB_EVENTS_TABLES:
         entry = tables[f"web_events_{spec.table_name}"]
-        assert entry["logic"] == f"notebooks/silver/web_events_{spec.table_name}.sql"
+        assert entry["logic"] == f"notebooks/silver/web_events_{spec.table_name}.py"
 
 
-def test_write_silver_logic_files_reads_from_the_matching_bronze_table(tmp_path):
+def test_write_silver_logic_files_writes_a_sql_filter_for_erp(tmp_path):
     from scripts.build_pipeline_yaml import write_silver_logic_files
 
     write_silver_logic_files(str(tmp_path))
@@ -4909,13 +4964,34 @@ def test_write_silver_logic_files_reads_from_the_matching_bronze_table(tmp_path)
     assert "FROM bronze.erp_customer" in sql
 
 
+def test_write_silver_logic_files_writes_a_window_dedup_for_hr(tmp_path):
+    from scripts.build_pipeline_yaml import write_silver_logic_files
+
+    write_silver_logic_files(str(tmp_path))
+
+    content = (tmp_path / "hr_employee.py").read_text()
+    assert 'spark.table("bronze.hr_employee")' in content
+    assert 'Window.partitionBy("employee_id")' in content
+
+
+def test_write_silver_logic_files_uses_the_id_column_override_for_device_status(tmp_path):
+    # generation/iot_telemetry.py's device_status table is keyed by
+    # `device_id`, not the mechanical `device_status_id`.
+    from scripts.build_pipeline_yaml import write_silver_logic_files
+
+    write_silver_logic_files(str(tmp_path))
+
+    content = (tmp_path / "iot_telemetry_device_status.py").read_text()
+    assert 'Window.partitionBy("device_id")' in content
+
+
 def test_write_silver_logic_files_sources_doubled_systems_from_the_kusto_bronze_table(tmp_path):
     from scripts.build_pipeline_yaml import write_silver_logic_files
 
     write_silver_logic_files(str(tmp_path))
 
-    sql = (tmp_path / "web_events_page_view.sql").read_text()
-    assert "FROM bronze.web_events_page_view_kusto" in sql
+    content = (tmp_path / "web_events_page_view.py").read_text()
+    assert 'spark.table("bronze.web_events_page_view_kusto")' in content
 ```
 
 - [ ] **Step 2: Implement**
@@ -4923,17 +4999,40 @@ def test_write_silver_logic_files_sources_doubled_systems_from_the_kusto_bronze_
 Append to `scripts/build_pipeline_yaml.py`:
 
 ```python
+# A realistic mix, not uniform: hr/finance/support's real sources can
+# retry a write and land a duplicate row within a batch; erp/crm/
+# supply_chain/marketing's generated data doesn't have that story, so a
+# plain SQL filter is genuinely enough for them.
+_PY_SILVER_SYSTEMS = frozenset({"hr", "finance", "support"})
+
+# Same reasoning as _BUSINESS_KEY_OVERRIDES above, for the doubled
+# systems' dedup key: web_events' session_start/session_end share one
+# session_id rather than each having its own `{table}_id`; iot_telemetry's
+# device_status is naturally keyed by `device_id`.
+_DOUBLED_ID_COLUMN_OVERRIDES = {
+    "web_events_session_start": "session_id",
+    "web_events_session_end": "session_id",
+    "iot_telemetry_device_status": "device_id",
+}
+
+
+def _id_column_for(system_name: str, table_name: str) -> str:
+    override = _DOUBLED_ID_COLUMN_OVERRIDES.get(f"{system_name}_{table_name}")
+    return override if override is not None else f"{table_name}_id"
+
+
 def build_silver_tables() -> dict:
     tables: dict = {}
 
     for system_name, (module, _source_type, key_pattern) in _SYSTEMS.items():
         if key_pattern is None:  # reference data passes through unchanged - no silver needed
             continue
+        extension = "py" if system_name in _PY_SILVER_SYSTEMS else "sql"
         for spec in module.TABLES:
             bronze_name = f"{system_name}_{spec.table_name}"
             tables[bronze_name] = {
-                "logic": f"notebooks/silver/{bronze_name}.sql",
-                "business_key": [key_pattern.format(table=spec.table_name)],
+                "logic": f"notebooks/silver/{bronze_name}.{extension}",
+                "business_key": [_business_key_for(system_name, spec.table_name, key_pattern)],
                 "strategy": "replace",
                 "depends_on": "auto",
             }
@@ -4942,12 +5041,43 @@ def build_silver_tables() -> dict:
         for spec in module.TABLES:
             silver_name = f"{system_name}_{spec.table_name}"
             tables[silver_name] = {
-                "logic": f"notebooks/silver/{silver_name}.sql",
+                "logic": f"notebooks/silver/{silver_name}.py",
                 "strategy": "replace",
                 "depends_on": "auto",
             }
 
     return tables
+
+
+def _passthrough_sql(bronze_name: str) -> str:
+    return (
+        f"-- one output table per file: this is silver.{bronze_name}\n"
+        f"SELECT *\nFROM bronze.{bronze_name}\nWHERE _is_deleted = false\n"
+    )
+
+
+def _dedup_py(bronze_name: str, output_name: str, business_key: str, *, extra_comment: str = "") -> str:
+    return (
+        f"# one output table per file: this is silver.{output_name}\n"
+        "#\n"
+        "# Bronze can carry more than one row per business key within a\n"
+        "# batch (a retried write, a duplicate delivery from the source) -\n"
+        "# a window function keeps the most recently inserted row per key\n"
+        "# rather than leaving the merge downstream to reject the batch.\n"
+        f"{extra_comment}"
+        "from pyspark.sql import Window\n"
+        "from pyspark.sql import functions as F\n"
+        "\n"
+        f'raw = spark.table("bronze.{bronze_name}")  # noqa: F821\n'
+        "\n"
+        f'window = Window.partitionBy("{business_key}").orderBy(F.col("_inserted_at").desc())\n'
+        "result = (\n"
+        '    raw.withColumn("_row_number", F.row_number().over(window))\n'
+        '    .filter(F.col("_row_number") == 1)\n'
+        '    .drop("_row_number")\n'
+        '    .filter(F.col("_is_deleted") == False)  # noqa: E712 - Spark column, not a Python bool\n'
+        ")\n"
+    )
 
 
 def write_silver_logic_files(output_dir: str) -> None:
@@ -4958,25 +5088,30 @@ def write_silver_logic_files(output_dir: str) -> None:
             continue
         for spec in module.TABLES:
             bronze_name = f"{system_name}_{spec.table_name}"
-            sql = (
-                f"-- one output table per file: this is silver.{bronze_name}\n"
-                f"SELECT *\nFROM bronze.{bronze_name}\nWHERE _is_deleted = false\n"
-            )
-            with open(f"{output_dir}/{bronze_name}.sql", "w") as f:
-                f.write(sql)
+            if system_name in _PY_SILVER_SYSTEMS:
+                business_key = _business_key_for(system_name, spec.table_name, key_pattern)
+                content = _dedup_py(bronze_name, bronze_name, business_key)
+                extension = "py"
+            else:
+                content = _passthrough_sql(bronze_name)
+                extension = "sql"
+            with open(f"{output_dir}/{bronze_name}.{extension}", "w") as f:
+                f.write(content)
 
     for system_name, (module, _kusto_type, _stream_type) in _DOUBLED_SYSTEMS.items():
         for spec in module.TABLES:
             silver_name = f"{system_name}_{spec.table_name}"
             bronze_kusto_name = f"{silver_name}_kusto"
-            sql = (
-                f"-- one output table per file: this is silver.{silver_name}\n"
-                f"-- sourced from the hot (kusto/Log Analytics) path; the cold ADLS\n"
-                f"-- path (bronze.{silver_name}_files) is for reconciliation, not this table\n"
-                f"SELECT *\nFROM bronze.{bronze_kusto_name}\n"
+            id_column = _id_column_for(system_name, spec.table_name)
+            comment = (
+                f"# Sourced from the hot (kusto/Log Analytics) path; the cold\n"
+                f"# ADLS path (bronze.{silver_name}_files) is for reconciliation,\n"
+                "# not this table. Event Hub delivery is at-least-once, so\n"
+                "# duplicate events are the expected case here.\n"
             )
-            with open(f"{output_dir}/{silver_name}.sql", "w") as f:
-                f.write(sql)
+            content = _dedup_py(bronze_kusto_name, silver_name, id_column, extra_comment=comment)
+            with open(f"{output_dir}/{silver_name}.py", "w") as f:
+                f.write(content)
 ```
 
 Update `main()` to also merge `silver`:
@@ -5004,7 +5139,7 @@ Expected: `pipetree validate` reports the config valid - the first real end-to-e
 
 ```bash
 git add scripts/build_pipeline_yaml.py pipelines/pipeline.yaml pipelines/notebooks/silver tests/scripts/test_build_pipeline_yaml.py
-git commit -m "feat(pipelines): silver layer - generated cleansing pass"
+git commit -m "feat(pipelines): silver layer - a real mix of SQL and PySpark"
 ```
 
 ### Task 31: Integration layer — cross-source customer identity resolution
