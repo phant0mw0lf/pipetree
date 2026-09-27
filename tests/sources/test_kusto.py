@@ -68,7 +68,9 @@ def make_ctx(spark: Any, table: Table, system: System) -> SourceContext:
     return SourceContext(spark, table, system, LocalPlatform(), Path("."))
 
 
-def make_ctx_with_platform(spark: Any, table: Table, system: System, platform: Any) -> SourceContext:
+def make_ctx_with_platform(
+    spark: Any, table: Table, system: System, platform: Any
+) -> SourceContext:
     return SourceContext(spark, table, system, platform, Path("."))
 
 
