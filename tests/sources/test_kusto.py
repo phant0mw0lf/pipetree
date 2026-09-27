@@ -68,6 +68,10 @@ def make_ctx(spark: Any, table: Table, system: System) -> SourceContext:
     return SourceContext(spark, table, system, LocalPlatform(), Path("."))
 
 
+def make_ctx_with_platform(spark: Any, table: Table, system: System, platform: Any) -> SourceContext:
+    return SourceContext(spark, table, system, platform, Path("."))
+
+
 def read(ctx: SourceContext) -> Any:
     return KustoSource().read(ctx)
 
@@ -126,4 +130,41 @@ def test_raises_a_clear_error_when_auth_is_missing():
     ctx = make_ctx(FakeSpark(), make_table(), system)
 
     with pytest.raises(ValueError, match="auth"):
+        read(ctx)
+
+
+def test_uses_aad_token_auth_when_mode_is_aad_token():
+    class FakePlatform(LocalPlatform):
+        def acquire_token(self, resource):
+            assert resource == "https://api.loganalytics.io/"
+            return "fake-token"
+
+    system = System.model_validate(
+        {
+            "type": "kusto",
+            "cluster": "https://mycluster.westeurope.kusto.windows.net",
+            "database": "mydb",
+            "auth": {"mode": "aad_token", "resource": "https://api.loganalytics.io/"},
+        }
+    )
+    ctx = make_ctx_with_platform(FakeSpark(), make_table(), system, FakePlatform())
+
+    _, _, options = read(ctx)
+
+    assert options["kustoAccessToken"] == "fake-token"
+    assert "kustoAadAppSecret" not in options
+
+
+def test_rejects_an_unknown_auth_mode():
+    system = System.model_validate(
+        {
+            "type": "kusto",
+            "cluster": "https://mycluster.westeurope.kusto.windows.net",
+            "database": "mydb",
+            "auth": {"mode": "bogus"},
+        }
+    )
+    ctx = make_ctx(FakeSpark(), make_table(), system)
+
+    with pytest.raises(ValueError, match="auth.mode"):
         read(ctx)

@@ -7,6 +7,11 @@ on its classpath (a `--packages` dependency, the same idea as
 **`MAVEN_COORDINATE` is unverified** - pin it to whatever's current for
 your Spark/Scala version when you actually wire this up; it's a
 plausible-looking default, not a tested one.
+
+**`kustoAccessToken` (the option `auth.mode: aad_token` sets) is a
+plausible-looking option name for passing a pre-acquired AAD token
+directly, same caveat as `MAVEN_COORDINATE` above - verify it against
+the connector version actually pinned before relying on it.
 """
 
 from __future__ import annotations
@@ -40,24 +45,38 @@ class KustoSource:
         table_name = ctx.table.source.object
 
         auth = _required(getattr(system, "auth", None), "auth", fqn)
-        app_id = resolve_value(_required(auth.get("appId"), "auth.appId", fqn), ctx.platform)
-        app_secret = resolve_value(
-            _required(auth.get("appSecret"), "auth.appSecret", fqn), ctx.platform
-        )
-        authority = resolve_value(
-            _required(auth.get("authority"), "auth.authority", fqn), ctx.platform
-        )
+        mode = auth.get("mode", "app_secret")
 
-        return (
+        reader = (
             ctx.spark.read.format(_FORMAT)
             .option("kustoCluster", cluster)
             .option("kustoDatabase", database)
             .option("kustoTable", table_name)
-            .option("kustoAadAppId", app_id)
-            .option("kustoAadAppSecret", app_secret)
-            .option("kustoAadAuthorityID", authority)
-            .load()
         )
+
+        if mode == "aad_token":
+            resource = _required(auth.get("resource"), "auth.resource", fqn)
+            token = ctx.platform.acquire_token(resource)
+            reader = reader.option("kustoAccessToken", token)
+        elif mode == "app_secret":
+            app_id = resolve_value(_required(auth.get("appId"), "auth.appId", fqn), ctx.platform)
+            app_secret = resolve_value(
+                _required(auth.get("appSecret"), "auth.appSecret", fqn), ctx.platform
+            )
+            authority = resolve_value(
+                _required(auth.get("authority"), "auth.authority", fqn), ctx.platform
+            )
+            reader = (
+                reader.option("kustoAadAppId", app_id)
+                .option("kustoAadAppSecret", app_secret)
+                .option("kustoAadAuthorityID", authority)
+            )
+        else:
+            raise ValueError(
+                f"{fqn}: kusto auth.mode must be 'app_secret' or 'aad_token', got {mode!r}"
+            )
+
+        return reader.load()
 
 
 def _required(value: Any, field_name: str, table_fqn: str) -> Any:
