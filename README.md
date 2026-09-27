@@ -10,12 +10,11 @@ This is the companion package to the
 series. Part 1 covers the design and the YAML schema; part 2 covers the
 executor this repo implements (multithreading, retries, failure handling).
 
-Status: Phase A (part 2's core), Phase B (selection, subtree closure, tree
-rendering), Phase C (the platform seam, a Databricks Asset Bundle, a
-Fabric notebook), Phase D (source readers) and Phase E (schema drift) are
-built. Phase C is **not yet verified against a real workspace** - see
-`examples/databricks/README.md` and `examples/fabric/README.md`. See
-`docs/build-order.md` for what's next.
+Status: all six phases of the original build order are done - core (part
+2), graph features, the platform seam, source readers, schema drift, and
+AUTO CDC translation. Phase C (Databricks/Fabric) is **not yet verified
+against a real workspace** - see `examples/databricks/README.md` and
+`examples/fabric/README.md`. See `docs/build-order.md` for what's left.
 
 ## Prerequisites
 
@@ -123,11 +122,18 @@ See the blog series for the full design rationale. In short:
   `_meta.pipeline_run_log` (a `replaceWhere` on `_execution_id`, so
   re-running the same execution id overwrites rather than duplicates); a
   pluggable `Notifier` reports the digest (`ConsoleNotifier` by default).
+- **Declarative pipelines** (`pipetree.declarative.autocdc`) — a pure
+  translation of an `scd1`/`scd2` table into Databricks' AUTO CDC flow
+  syntax (`KEYS`, `SEQUENCE BY`, `APPLY AS DELETE WHEN`,
+  `STORED AS SCD TYPE`, `TRACK HISTORY ON * EXCEPT`) - the comparison part
+  1 draws, made mechanical. Not an executor: AUTO CDC only runs inside a
+  Lakeflow Declarative Pipeline, where the platform owns the DAG; this
+  compiles to it, and doesn't attempt to run anything itself.
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
 parameters, the `append` retry rule, two real Spark/Delta bugs, the
-platform seam, making `Trigger.AvailableNow` behave, schema drift) made
-while building this.
+platform seam, making `Trigger.AvailableNow` behave, schema drift, AUTO
+CDC) made while building this.
 
 ## Running on Databricks or Fabric
 

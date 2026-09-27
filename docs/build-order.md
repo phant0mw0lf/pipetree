@@ -38,8 +38,25 @@ add adapters and features behind seams the core already defines.
       recorded in the run log's `schema_changes` column. Verified for real
       locally (real Spark, real Delta schema evolution) - not something
       that needed a mock.
-- [ ] **Phase F — declarative pipelines**: AUTO CDC translation for
-      Databricks declarative pipelines.
+- [x] **Phase F — declarative pipelines**: `pipetree.declarative.autocdc`
+      translates an scd1/scd2 `Table` into a Databricks AUTO CDC flow -
+      `KEYS`, `SEQUENCE BY`, `APPLY AS DELETE WHEN`, `STORED AS SCD TYPE`,
+      `TRACK HISTORY ON * EXCEPT` - exactly the comparison part 1 draws.
+      A pure translation (`Table` → `AutoCdcFlow` → SQL text), since AUTO
+      CDC only runs inside a Lakeflow Declarative Pipeline and pipetree
+      has nothing to execute there, only something to compile to.
+      `replace`/`append` are rejected - they need no CDC apparatus, just a
+      plain streaming table or materialized view. The exact current
+      Python API (`dlt.create_auto_cdc_flow`, previously
+      `dlt.apply_changes`) isn't verified; the rendered SQL is checked
+      against part 1's own worked example instead, the more stable target.
+
+This closes the build order from the original plan. What's still open:
+the **Databricks/Fabric verification round** from Phase C (deploy
+`examples/databricks/` and `examples/fabric/` for real, report back what
+breaks) and the two `NOTES-for-blog.md` gaps flagged along the way (a
+production-scale approach for scd2's driver-side "changed rows"
+materialization; `append` schema-policy enforcement).
 
 Each phase is small commits, tests first. README and `NOTES-for-blog.md`
 were written during Phase A rather than held for the end, since that phase

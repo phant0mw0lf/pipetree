@@ -334,3 +334,47 @@ scd2's new-version write, but wasn't wired up this pass; an append table
 with a genuinely new column will fail with Delta's own schema-mismatch
 error today rather than pipetree's `SchemaError`. Worth fixing before
 relying on `append` + evolving sources in the same pipeline.
+
+## Phase F: declarative pipelines (AUTO CDC)
+
+**This one is a compiler, not a runtime, and staying honest about that
+shaped the whole module.** AUTO CDC (`CREATE FLOW ... AS AUTO CDC INTO`)
+only exists inside a running Lakeflow Declarative Pipeline - there's no
+`dlt` package to import and call outside of one, so nothing here could
+ever be "tested against the real thing" the way the Spark adapter's merge
+logic was. `translate_table()` and `render_sql()` are pure functions
+(`Table` in, a dataclass and then SQL text out), which turned out to be
+exactly the right shape anyway: it makes the translation fully testable
+without Databricks, and it's genuinely all pipetree can responsibly do
+here - the platform owns the DAG once code runs inside a declarative
+pipeline, pipetree just hands it the equivalent syntax.
+
+**SQL over the Python API, on purpose, given what could and couldn't be
+verified.** Databricks renamed `dlt.apply_changes` to
+`dlt.create_auto_cdc_flow` at some point, which means the "current"
+Python parameter names are a moving target I have no way to check from
+here. The SQL grammar (`KEYS`, `SEQUENCE BY`, `APPLY AS DELETE WHEN`,
+`STORED AS SCD TYPE`, `TRACK HISTORY ON * EXCEPT`) is the one part 1
+already commits to in print, so it's the more stable thing to render with
+any confidence - and it's directly usable in a pipeline's SQL source
+regardless of which Python spelling is current this month.
+
+**The field mapping is deliberately narrower than pipetree's own
+`merge_mode`.** `delete_mode` (soft/hard/ignore) doesn't translate:
+AUTO CDC's own delete behavior is fixed by `stored_as_scd_type` (closing
+a version for SCD2, removing the row for SCD1, as far as the docs
+describe it), not a further per-table choice - so only whether a delete
+signal exists at all carries over (`ignore` drops it, matching the same
+rule `_prepare_source` already uses in the Spark adapter), not which of
+pipetree's three modes produced it. Translating a `soft`-delete `scd1`
+table and expecting AUTO CDC to reproduce pipetree's exact
+keep-the-row-mark-it-deleted semantics would be overclaiming something
+I can't verify - said so in the docstring rather than guessing.
+
+**`replace`/`append` are rejected outright, not silently ignored.**
+Neither strategy has anything resembling `KEYS` or CDC semantics to
+translate - a table that fully replaces or blindly appends each run is
+already exactly a plain streaming table or materialized view in a
+declarative pipeline, with no flow declaration needed at all. Raising
+a clear `ValueError` naming the actual strategy seemed more useful than
+returning `None` and leaving the caller to guess why.
