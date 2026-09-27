@@ -11,6 +11,13 @@ caller can build one if it needs that, this class doesn't assume it.
 `run_metadata`, like on `DatabricksPlatform`, is supplied by the caller
 rather than pulled from `notebookutils.runtime.context` here - the exact
 shape of that context needs checking against a real workspace.
+
+`acquire_token` delegates to `notebookutils.credentials.getToken(resource)`
+against the workspace identity - no stored secret. The exact `resource`
+argument Fabric expects (a short audience keyword like `'storage'` vs. a full
+`https://` resource URI) is unverified against a real workspace; `resource`
+is passed straight through, so whichever shape the caller supplies is what
+Fabric sees.
 """
 
 from __future__ import annotations
@@ -46,4 +53,4 @@ class FabricPlatform:
         return dict(self._run_metadata)
 
     def acquire_token(self, resource: str) -> str:
-        raise NotImplementedError("acquire_token is not yet implemented for FabricPlatform")
+        return self._notebookutils.credentials.getToken(resource)

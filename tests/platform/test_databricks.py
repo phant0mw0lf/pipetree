@@ -17,7 +17,7 @@ class FakeSecrets:
 class FakeDbutils:
     def __init__(self, secrets: FakeSecrets) -> None:
         self.secrets = secrets
-        self.credentials: "FakeCredentialsAPI | None" = None
+        self.credentials: FakeCredentialsAPI | None = None
 
 
 def make_platform(secret_values: dict[tuple[str, str], str] | None = None) -> DatabricksPlatform:
