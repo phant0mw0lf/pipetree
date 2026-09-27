@@ -56,7 +56,12 @@ the **Databricks/Fabric verification round** from Phase C (deploy
 `examples/databricks/` and `examples/fabric/` for real, report back what
 breaks) and the two `NOTES-for-blog.md` gaps flagged along the way (a
 production-scale approach for scd2's driver-side "changed rows"
-materialization; `append` schema-policy enforcement).
+materialization; `append` schema-policy enforcement). Token-based
+(`aad_token`) auth was added to `sqlserver`/`kusto` and the platform seam
+for the pipetree-scale-bench project's secretless-connections requirement -
+real-workspace verification of `acquire_token` (the UC service credential
+call, the Fabric workspace-identity token call) is part of that project's
+own rollout, not this repo's test suite.
 
 Each phase is small commits, tests first. README and `NOTES-for-blog.md`
 were written during Phase A rather than held for the end, since that phase

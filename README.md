@@ -116,7 +116,14 @@ See the blog series for the full design rationale. In short:
   directly through an Access Connector; Unity Catalog naming is handled by
   setting the session's default catalog, not by rewriting every table
   reference), `FabricPlatform` (`notebookutils.credentials`, the attached
-  lakehouse's `Files/` mount). `detect()` picks one from runtime markers.
+  lakehouse's `Files/` mount). Every platform also implements
+  `acquire_token(resource)` - a short-lived AAD token via the platform's
+  own identity (a Unity Catalog service credential on Databricks, the
+  workspace identity on Fabric, `DefaultAzureCredential` locally), for the
+  `sqlserver`/`kusto` sources' `auth.mode: aad_token` path. Secret-based
+  auth stays the default for anyone without managed-identity infrastructure
+  available; token-based auth is additive, not a replacement. `detect()`
+  picks one from runtime markers.
 - **Run log & notifier** (`pipetree.runlog`) — every table's result is
   collected in memory and written once, at the end, to
   `_meta.pipeline_run_log` (a `replaceWhere` on `_execution_id`, so
