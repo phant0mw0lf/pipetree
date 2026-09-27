@@ -369,3 +369,113 @@ def test_replace_accepts_the_init_flag_without_changing_behaviour(spark):
     )
 
     assert result["rows_written"] == 1
+
+
+# --------------------------------------------------------------- schema drift
+
+
+def test_scd1_evolve_adds_a_new_column_and_records_the_drift(spark):
+    table = make_table("customer9", "scd1")  # schema_policy defaults to evolve
+    merge_scd1(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    result = merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([(2, "Bob", "bob@example.com")], ["id", "name", "email"]),
+        2,
+        "crm",
+    )
+
+    written = rows(spark.table(table.fqn))
+    assert written[2]["email"] == "bob@example.com"
+    assert written[1]["email"] is None  # the existing row, untouched, gets a null
+    assert any("added: email" in c for c in result["schema_changes"])
+
+
+def test_scd2_evolve_adds_a_new_column_and_records_the_drift(spark):
+    table = make_table("dim9", "scd2")
+    merge_scd2(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    result = merge_scd2(
+        spark,
+        table,
+        spark.createDataFrame([(2, "Bob", "bob@example.com")], ["id", "name", "email"]),
+        2,
+        "crm",
+    )
+
+    written = rows(spark.table(table.fqn))
+    assert written[2]["email"] == "bob@example.com"
+    assert any("added: email" in c for c in result["schema_changes"])
+
+
+def test_fail_policy_raises_and_never_writes_on_any_drift(spark):
+    table = make_table("customer10", "scd1", schema_policy="fail")
+    merge_scd1(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    from pipetree.schema.errors import SchemaError
+
+    with pytest.raises(SchemaError, match="added: email"):
+        merge_scd1(
+            spark,
+            table,
+            spark.createDataFrame([(2, "Bob", "bob@example.com")], ["id", "name", "email"]),
+            2,
+            "crm",
+        )
+
+    # the failed attempt must not have touched the table
+    assert set(rows(spark.table(table.fqn))) == {1}
+
+
+def test_ignore_policy_silently_drops_the_new_column(spark):
+    table = make_table("customer11", "scd1", schema_policy="ignore")
+    merge_scd1(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    result = merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([(2, "Bob", "bob@example.com")], ["id", "name", "email"]),
+        2,
+        "crm",
+    )
+
+    written = rows(spark.table(table.fqn))
+    assert "email" not in spark.table(table.fqn).columns
+    assert written[2]["name"] == "Bob"
+    assert len(result["schema_changes"]) == 1
+
+
+def test_evolve_allows_a_safe_widening_without_failing(spark):
+    table = make_table("customer12", "scd1")
+    merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([(1, "Alice")], ["id", "name"]).selectExpr(
+            "cast(id as int) as id", "name"
+        ),
+        1,
+        "crm",
+    )
+
+    # id arrives as bigint this time - a safe widening from int, not a failure
+    result = merge_scd1(spark, table, spark.createDataFrame([(2, "Bob")], ["id", "name"]), 2, "crm")
+
+    assert result["schema_changes"]
+    assert set(rows(spark.table(table.fqn))) == {1, 2}
+
+
+def test_evolve_rejects_an_unsafe_retype(spark):
+    table = make_table("customer13", "scd1")
+    merge_scd1(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    from pipetree.schema.errors import SchemaError
+
+    with pytest.raises(SchemaError, match="unsafe retype"):
+        merge_scd1(
+            spark,
+            table,
+            spark.createDataFrame([("2", "Bob")], ["id", "name"]),  # id is now a string
+            2,
+            "crm",
+        )

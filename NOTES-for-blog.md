@@ -277,3 +277,60 @@ called these "thin wrappers, not separate subsystems," and once
 If a real deployment needs source-specific behavior (Synapse Link's
 delete-flagged rows, say), that's a difference in the *config* for that
 table (`delete_when`), not a reason for a separate reader class.
+
+## Phase E: schema drift
+
+**Spark's type names are not Python's, and this would have been an
+embarrassing bug to ship.** `LongType().simpleString()` is `"bigint"`,
+not `"long"`; `ByteType()` is `"tinyint"`, `ShortType()` is `"smallint"`.
+The safe-widening table (int→long, float→double are the two examples the
+design settled on) had to be built against Spark's actual `simpleString()`
+names, not the ones that read naturally in English - checked with a
+two-line script against a real session before writing the table, not
+assumed. Worth a line in the post: verify vendor type-name strings
+empirically, they're rarely what your own prose implies.
+
+**A newly-added column can't be part of its own "did this change"
+check.** The first real integration attempt failed immediately:
+`schema_policy: evolve` allowed a new `email` column through, but the
+change-detection SQL still compared `target.email <=> source.email` -
+and `target.email` doesn't exist yet, because it's the column *being*
+added. Delta's error here was exact and immediate
+(`DELTA_MERGE_UNRESOLVED_EXPRESSION`), which made the fix obvious once it
+happened: exclude a column from the change comparison unless it already
+exists on the target side. `SchemaReconciliation` carries the target's
+pre-write column set for exactly this - a column with no old value can't
+inform whether a row "changed," and the merge writes it regardless of
+that comparison anyway (every column in scope is in the `SET`/`INSERT`
+values either way).
+
+**`DeltaMergeBuilder.withSchemaEvolution()` is a real, working method on
+delta-spark 4.0.1** - checked directly (`dir(DeltaMergeBuilder)`) before
+relying on it, then proved end-to-end with a throwaway script: merging a
+source with an extra column into an existing table, with
+`.withSchemaEvolution()` on the merge builder, actually adds the column
+and backfills existing rows with null. The append-only "new scd2 version"
+write needs the parallel `.option("mergeSchema", "true")` on its own
+`saveAsTable` call - a Delta merge and a Delta append have separate
+schema-evolution switches, and forgetting the second one would silently
+fail (or silently succeed without writing the new column) only on a
+`scd2` table with a genuinely new column, which is exactly the kind of
+gap that's invisible until someone hits it in production.
+
+**`fail` and `ignore` reuse the exact same detection path as `evolve` -
+they don't special-case "no drift."** `reconcile()` always diffs first;
+if the diff is empty, every policy just returns the source unchanged.
+This means the fail-fast property is real: a `schema_policy: fail` table
+never even builds a merge plan against drifted data, because the
+`SchemaError` raises before `_prepare_source` or the `DeltaTable.merge()`
+call ever runs.
+
+**Scope decision: `append` and `replace` don't get schema-policy
+enforcement.** `replace` already means "whatever the source says, goes" -
+its `overwriteSchema: true` on every write already is unconditional
+evolution, and enforcing `fail`/`ignore` there would contradict what
+`replace` is for. `append` would need the same `mergeSchema` wiring as
+scd2's new-version write, but wasn't wired up this pass; an append table
+with a genuinely new column will fail with Delta's own schema-mismatch
+error today rather than pipetree's `SchemaError`. Worth fixing before
+relying on `append` + evolving sources in the same pipeline.

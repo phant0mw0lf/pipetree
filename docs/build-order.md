@@ -29,8 +29,15 @@ add adapters and features behind seams the core already defines.
       its Auto Loader branch, and `sqlserver`/`kusto`'s option-building,
       are tested against hand-written fakes - there's no real SQL Server,
       Kusto cluster, or Databricks storage account here to connect to.
-- [ ] **Phase E — schema drift**: inference, diff, `evolve | fail | ignore`
-      policies.
+- [x] **Phase E — schema drift**: inference (`pipetree.schema.infer`),
+      diff (added/removed/retyped/nullability), and the three policies
+      (`evolve` - safe numeric widenings + `withSchemaEvolution()` for a
+      genuinely new column, never dropping a removed one; `fail` - any
+      drift raises before anything is written; `ignore` - the intersection
+      only) wired into `merge_scd1`/`merge_scd2`. Every non-empty diff is
+      recorded in the run log's `schema_changes` column. Verified for real
+      locally (real Spark, real Delta schema evolution) - not something
+      that needed a mock.
 - [ ] **Phase F — declarative pipelines**: AUTO CDC translation for
       Databricks declarative pipelines.
 

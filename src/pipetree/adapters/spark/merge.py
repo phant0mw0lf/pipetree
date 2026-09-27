@@ -28,8 +28,33 @@ from pipetree.adapters.spark.audit import (
 from pipetree.adapters.spark.dedupe import dedupe_for_merge
 from pipetree.executor.execution_id import timestamp_bigint
 from pipetree.model import Table
+from pipetree.schema.infer import infer_schema
+from pipetree.schema.policy import SchemaReconciliation, reconcile
 
 _IS_DELETE_COL = "__pipetree_is_delete__"
+
+# Excluded when inferring a target table's schema for drift comparison -
+# these are pipetree's own stamps, never part of the source's schema.
+_AUDIT_COLUMNS = frozenset(
+    {
+        "_inserted_at",
+        "_updated_at",
+        "_is_deleted",
+        "_execution_id",
+        "_source_system",
+        "_valid_from",
+        "_valid_to",
+        "_is_current",
+    }
+)
+
+
+def _reconcile_schema(
+    spark: SparkSession, table: Table, deduped: DataFrame
+) -> SchemaReconciliation:
+    target_schema = infer_schema(spark.table(table.fqn), exclude=_AUDIT_COLUMNS)
+    source_schema = infer_schema(deduped)
+    return reconcile(deduped.columns, source_schema, target_schema, table.schema_policy, table.fqn)
 
 
 def merge_replace(
@@ -81,11 +106,10 @@ def merge_scd1(
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
     deduped, duplicates_dropped = dedupe_for_merge(source, table)
-    prepared = _prepare_source(deduped, table)
-    columns = deduped.columns
 
     # init is a full reload: seed from scratch even if the table exists.
     if init or not _table_exists(spark, table.fqn):
+        prepared = _prepare_source(deduped, table)
         seed = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
         stamped = _with_values(seed, insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
@@ -94,8 +118,14 @@ def merge_scd1(
         ).saveAsTable(table.fqn)
         return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
 
+    reconciliation = _reconcile_schema(spark, table, deduped)
+    if reconciliation.columns != deduped.columns:
+        deduped = deduped.select(*reconciliation.columns)
+    columns = reconciliation.columns
+    prepared = _prepare_source(deduped, table)
+
     key_cond = _key_condition(table)
-    change_cond = _change_condition_sql(columns, table)
+    change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
     insert_values = _column_mapping(columns, insert_audit_values(execution_id, source_system, now))
     update_values = _column_mapping(columns, update_audit_values(execution_id, source_system, now))
 
@@ -114,15 +144,17 @@ def merge_scd1(
         merge_builder = merge_builder.whenMatchedDelete(condition=f"source.{_IS_DELETE_COL} = true")
 
     row_count = prepared.count()
-    (
-        merge_builder.whenMatchedUpdate(
-            condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=update_values
-        )
-        .whenNotMatchedInsert(condition=f"source.{_IS_DELETE_COL} = false", values=insert_values)
-        .execute()
-    )
+    final_builder = merge_builder.whenMatchedUpdate(
+        condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=update_values
+    ).whenNotMatchedInsert(condition=f"source.{_IS_DELETE_COL} = false", values=insert_values)
+    if reconciliation.needs_schema_evolution:
+        final_builder = final_builder.withSchemaEvolution()
+    final_builder.execute()
 
-    return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    result: dict[str, Any] = {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    if reconciliation.changes:
+        result["schema_changes"] = [str(change) for change in reconciliation.changes]
+    return result
 
 
 def merge_scd2(
@@ -136,12 +168,11 @@ def merge_scd2(
     _ensure_schema(spark, table.fqn)
     now = timestamp_bigint()
     deduped, duplicates_dropped = dedupe_for_merge(source, table)
-    prepared = _prepare_source(deduped, table)
-    columns = deduped.columns
 
     # init is a full reload: seed from scratch (a fresh version-1 history)
     # even if the table already exists.
     if init or not _table_exists(spark, table.fqn):
+        prepared = _prepare_source(deduped, table)
         seed = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
         stamped = _with_values(seed, scd2_insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
@@ -149,6 +180,12 @@ def merge_scd2(
             "overwriteSchema", "true"
         ).saveAsTable(table.fqn)
         return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+
+    reconciliation = _reconcile_schema(spark, table, deduped)
+    if reconciliation.columns != deduped.columns:
+        deduped = deduped.select(*reconciliation.columns)
+    columns = reconciliation.columns
+    prepared = _prepare_source(deduped, table)
 
     not_deleted = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
     current_before = spark.table(table.fqn).filter("_is_current = true")
@@ -161,12 +198,14 @@ def merge_scd2(
     # would silently recompute against the post-merge (already-closed) rows
     # the moment it's touched again. Demo-scale data only; a real dimension
     # table would need a different approach (see NOTES-for-blog.md).
-    new_version_rows = _rows_that_changed(not_deleted, current_before, table, columns).collect()
+    new_version_rows = _rows_that_changed(
+        not_deleted, current_before, table, columns, reconciliation.target_columns
+    ).collect()
     new_version_count = len(new_version_rows)
     new_versions_schema = not_deleted.select(*columns).schema
 
     key_cond = _key_condition(table) + " AND target._is_current = true"
-    change_cond = _change_condition_sql(columns, table)
+    change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
     close_for_delete: dict[str, str | Column] = {
         **update_audit_values(execution_id, source_system, now),
         **scd2_close_values(now),
@@ -182,7 +221,7 @@ def merge_scd2(
 
     row_count = prepared.count()
     delta_table = DeltaTable.forName(spark, table.fqn)
-    (
+    final_builder = (
         delta_table.alias("target")
         .merge(prepared.alias("source"), key_cond)
         .whenMatchedUpdate(condition=f"source.{_IS_DELETE_COL} = true", set=close_for_delete)
@@ -192,18 +231,26 @@ def merge_scd2(
         .whenNotMatchedInsert(
             condition=f"source.{_IS_DELETE_COL} = false", values=insert_new_key_values
         )
-        .execute()
     )
+    if reconciliation.needs_schema_evolution:
+        final_builder = final_builder.withSchemaEvolution()
+    final_builder.execute()
 
     if new_version_count > 0:
         new_versions = spark.createDataFrame(new_version_rows, schema=new_versions_schema)
         stamped_new_versions = _with_values(
             new_versions, scd2_insert_audit_values(execution_id, source_system, now)
         )
-        stamped_new_versions.write.format("delta").mode("append").saveAsTable(table.fqn)
+        writer = stamped_new_versions.write.format("delta").mode("append")
+        if reconciliation.needs_schema_evolution:
+            writer = writer.option("mergeSchema", "true")
+        writer.saveAsTable(table.fqn)
         row_count += new_version_count
 
-    return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    result: dict[str, Any] = {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    if reconciliation.changes:
+        result["schema_changes"] = [str(change) for change in reconciliation.changes]
+    return result
 
 
 def seed_unknown_member(spark: SparkSession, table: Table, execution_id: int) -> None:
@@ -275,14 +322,23 @@ def _key_condition(table: Table) -> str:
     return " AND ".join(f"target.{k} = source.{k}" for k in table.business_key)
 
 
-def _comparable_columns(columns: list, table: Table) -> list:
-    return [
+def _comparable_columns(
+    columns: list, table: Table, existing_columns: frozenset[str] | None = None
+) -> list:
+    candidates = [
         c for c in columns if c not in table.business_key and c not in table.merge.ignore_columns
     ]
+    if existing_columns is not None:
+        # A just-added column has no old value on the target side to
+        # compare against - it can't inform "did this row change".
+        candidates = [c for c in candidates if c in existing_columns]
+    return candidates
 
 
-def _change_condition_sql(columns: list, table: Table) -> str:
-    compare_cols = _comparable_columns(columns, table)
+def _change_condition_sql(
+    columns: list, table: Table, existing_columns: frozenset[str] | None = None
+) -> str:
+    compare_cols = _comparable_columns(columns, table, existing_columns)
     if not compare_cols:
         return "true"
     same = " AND ".join(f"target.{c} <=> source.{c}" for c in compare_cols)
@@ -290,11 +346,15 @@ def _change_condition_sql(columns: list, table: Table) -> str:
 
 
 def _rows_that_changed(
-    source_df: DataFrame, current_df: DataFrame, table: Table, columns: list
+    source_df: DataFrame,
+    current_df: DataFrame,
+    table: Table,
+    columns: list,
+    existing_columns: frozenset[str] | None = None,
 ) -> DataFrame:
     """Source rows whose business columns differ from their current target
     row - used to decide which keys need a new scd2 version opened."""
-    compare_cols = _comparable_columns(columns, table)
+    compare_cols = _comparable_columns(columns, table, existing_columns)
     join_cond = [source_df[k] == current_df[k] for k in table.business_key]
     joined = source_df.join(current_df, join_cond, "inner")
 

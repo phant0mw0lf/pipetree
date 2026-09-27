@@ -12,9 +12,10 @@ executor this repo implements (multithreading, retries, failure handling).
 
 Status: Phase A (part 2's core), Phase B (selection, subtree closure, tree
 rendering), Phase C (the platform seam, a Databricks Asset Bundle, a
-Fabric notebook) and Phase D (source readers) are built. Phase C is **not
-yet verified against a real workspace** - see `examples/databricks/README.md`
-and `examples/fabric/README.md`. See `docs/build-order.md` for what's next.
+Fabric notebook), Phase D (source readers) and Phase E (schema drift) are
+built. Phase C is **not yet verified against a real workspace** - see
+`examples/databricks/README.md` and `examples/fabric/README.md`. See
+`docs/build-order.md` for what's next.
 
 ## Prerequisites
 
@@ -99,6 +100,16 @@ See the blog series for the full design rationale. In short:
   work the executor can run once and finish - `d365_export` and
   `synapse_link` are aliases of it) and `custom` (a dotted-path class you
   bring yourself, e.g. for Microsoft Graph).
+- **Schema drift** (`pipetree.schema`) — structure is inferred, never
+  declared. Before an scd1/scd2 merge, the source's schema is diffed
+  against the target's (added/removed/retyped/nullability), and
+  `schema_policy` (`evolve` by default, or `fail`/`ignore` per table)
+  decides what happens: `evolve` applies safe numeric widenings and lets
+  Delta add a genuinely new column (`withSchemaEvolution()`), never drops
+  a removed one; `fail` raises before anything is written; `ignore` keeps
+  only the columns already in the target. Every non-empty diff is
+  recorded in the run log (`append`/`replace` don't enforce a policy -
+  `replace` already means "whatever the source says, goes").
 - **Platforms** (`pipetree.platform`) answer "where am I running?" for
   secrets, table naming, storage paths and run metadata - `LocalPlatform`
   (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret
@@ -115,8 +126,8 @@ See the blog series for the full design rationale. In short:
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
 parameters, the `append` retry rule, two real Spark/Delta bugs, the
-platform seam, making `Trigger.AvailableNow` behave) made while building
-this.
+platform seam, making `Trigger.AvailableNow` behave, schema drift) made
+while building this.
 
 ## Running on Databricks or Fabric
 
