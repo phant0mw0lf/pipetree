@@ -84,38 +84,97 @@ def test_run_metadata_returns_what_it_was_given():
     assert platform.run_metadata() == {"job_id": "42"}
 
 
-class FakeCredentialsAPI:
-    def __init__(self, tokens: dict[str, str]) -> None:
-        self._tokens = tokens
+class FakeAccessToken:
+    """Shaped like azure.core.credentials.AccessToken (token, expires_on)."""
 
-    def getServiceCredentialsFor(self, name: str) -> str:  # noqa: N802 - matches Databricks' real API
-        return self._tokens[name]
+    def __init__(self, token: str) -> None:
+        self.token = token
+        self.expires_on = 0
+
+
+class FakeTokenProvider:
+    """Shaped like the azure-core `TokenCredential` that
+    `dbutils.credentials.getServiceCredentialsProvider(name)` returns."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+        self.requested_scopes: list[tuple[str, ...]] = []
+
+    def get_token(self, *scopes: str) -> FakeAccessToken:
+        self.requested_scopes.append(scopes)
+        return FakeAccessToken(self._token)
+
+
+class FakeCredentialsAPI:
+    def __init__(self, providers: dict[str, FakeTokenProvider]) -> None:
+        self._providers = providers
+        self.requested_names: list[str] = []
+
+    def getServiceCredentialsProvider(self, name: str) -> FakeTokenProvider:  # noqa: N802 - matches Databricks' real API
+        self.requested_names.append(name)
+        return self._providers[name]
 
 
 def make_platform_with_service_credentials(
-    tokens: dict[str, str], service_credentials: dict[str, str]
-) -> DatabricksPlatform:
+    providers: dict[str, FakeTokenProvider], service_credentials: dict[str, str]
+) -> tuple[DatabricksPlatform, FakeCredentialsAPI]:
     dbutils = FakeDbutils(FakeSecrets({}))
-    dbutils.credentials = FakeCredentialsAPI(tokens)
-    return DatabricksPlatform(
+    credentials_api = FakeCredentialsAPI(providers)
+    dbutils.credentials = credentials_api
+    platform = DatabricksPlatform(
         dbutils=dbutils,
         catalog="prod",
         secret_scope="pipetree",
         service_credentials=service_credentials,
     )
+    return platform, credentials_api
 
 
-def test_acquire_token_resolves_through_the_named_service_credential():
-    platform = make_platform_with_service_credentials(
-        tokens={"sql-cred": "sql-token"},
+def test_acquire_token_resolves_through_the_named_service_credential_provider():
+    provider = FakeTokenProvider("sql-token")
+    platform, credentials_api = make_platform_with_service_credentials(
+        providers={"sql-cred": provider},
         service_credentials={"https://database.windows.net/": "sql-cred"},
     )
 
     assert platform.acquire_token("https://database.windows.net/") == "sql-token"
+    assert credentials_api.requested_names == ["sql-cred"]
+
+
+def test_acquire_token_requests_the_resource_default_scope():
+    # The provider is an azure-core TokenCredential: get_token(*scopes)
+    # wants a v2 scope, `<resource>/.default` - same shape as LocalPlatform.
+    provider = FakeTokenProvider("t")
+    platform, _ = make_platform_with_service_credentials(
+        providers={"sql-cred": provider, "kusto-cred": provider},
+        service_credentials={
+            "https://database.windows.net/": "sql-cred",
+            "https://api.kusto.windows.net": "kusto-cred",
+        },
+    )
+
+    platform.acquire_token("https://database.windows.net/")
+    platform.acquire_token("https://api.kusto.windows.net")
+
+    assert provider.requested_scopes == [
+        ("https://database.windows.net/.default",),
+        ("https://api.kusto.windows.net/.default",),
+    ]
 
 
 def test_acquire_token_raises_for_an_unconfigured_resource():
-    platform = make_platform_with_service_credentials(tokens={}, service_credentials={})
+    platform, _ = make_platform_with_service_credentials(providers={}, service_credentials={})
 
     with pytest.raises(ValueError, match="database.windows.net"):
+        platform.acquire_token("https://database.windows.net/")
+
+
+def test_acquire_token_raises_without_dbutils():
+    platform = DatabricksPlatform(
+        catalog="prod",
+        secret_resolver=lambda name: name,
+        service_credentials={"https://database.windows.net/": "sql-cred"},
+    )
+
+    with pytest.raises(ValueError, match="dbutils"):
         platform.acquire_token("https://database.windows.net/")
