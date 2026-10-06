@@ -79,3 +79,54 @@ def test_with_dependents_supports_multiple_seeds():
     result = resolve_selection(graph, ["bronze.a", "bronze.b"], with_dependents=True)
 
     assert result == {"bronze.a", "bronze.b", "silver.x", "silver.y"}
+
+
+def test_with_ancestors_extends_to_the_full_upstream_closure():
+    graph = make_graph(
+        {
+            "bronze.a": "scd1",
+            "silver.b": "replace",
+            "gold.c": "replace",
+            "gold.d": "replace",
+            "bronze.unrelated": "scd1",
+        },
+        edges={"silver.b": {"bronze.a"}, "gold.c": {"silver.b"}, "gold.d": {"silver.b"}},
+    )
+
+    result = resolve_selection(graph, ["gold.c"], with_dependents=False, with_ancestors=True)
+
+    # the parents all the way up; not the sibling gold.d (a child of silver.b, not an ancestor)
+    assert result == {"gold.c", "silver.b", "bronze.a"}
+
+
+def test_with_ancestors_follows_every_parent_of_a_table_with_two_parents():
+    graph = make_graph(
+        {"bronze.a": "scd1", "bronze.b": "scd1", "silver.x": "replace", "gold.c": "replace"},
+        edges={"silver.x": {"bronze.a"}, "gold.c": {"silver.x", "bronze.b"}},
+    )
+
+    result = resolve_selection(graph, ["gold.c"], with_dependents=False, with_ancestors=True)
+
+    assert result == {"gold.c", "silver.x", "bronze.a", "bronze.b"}
+
+
+def test_with_both_flags_selection_gets_both_closures_but_not_the_ancestors_of_dependents():
+    graph = make_graph(
+        {"bronze.a": "scd1", "silver.b": "replace", "gold.c": "replace", "bronze.other": "scd1"},
+        edges={"silver.b": {"bronze.a"}, "gold.c": {"silver.b", "bronze.other"}},
+    )
+
+    result = resolve_selection(graph, ["silver.b"], with_dependents=True, with_ancestors=True)
+
+    # gold.c is a dependent; its other parent bronze.other is not an ancestor of silver.b
+    assert result == {"bronze.a", "silver.b", "gold.c"}
+
+
+def test_with_ancestors_of_a_source_table_is_just_itself():
+    graph = make_graph(
+        {"bronze.a": "scd1", "silver.b": "replace"}, edges={"silver.b": {"bronze.a"}}
+    )
+
+    result = resolve_selection(graph, ["bronze.a"], with_dependents=False, with_ancestors=True)
+
+    assert result == {"bronze.a"}

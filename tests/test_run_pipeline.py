@@ -138,6 +138,23 @@ def test_select_with_dependents_runs_the_whole_subtree(tmp_path: Path):
     assert digest.results["silver.customer_enriched"].status == TableStatus.SUCCEEDED
 
 
+def test_select_with_ancestors_runs_the_table_and_everything_it_reads(tmp_path: Path):
+    config_path = write_config(tmp_path, CHAIN_CONFIG)
+    adapter = FakeAdapter()
+
+    digest = run_pipeline(
+        config_path,
+        adapter=adapter,
+        execution_id=1,
+        select=["customer_enriched"],
+        with_ancestors=True,
+    )
+
+    assert digest.results["bronze.customer"].status == TableStatus.SUCCEEDED
+    assert digest.results["silver.customer_enriched"].status == TableStatus.SUCCEEDED
+    assert digest.succeeded
+
+
 def test_select_raises_for_an_unknown_table(tmp_path: Path):
     config_path = write_config(tmp_path, CHAIN_CONFIG)
 

@@ -45,6 +45,7 @@ def run_pipeline(
     notifier: Notifier | None = None,
     select: list[str] | None = None,
     with_dependents: bool = False,
+    with_ancestors: bool = False,
     init: bool = False,
     observer: ObserverArg = None,
 ) -> RunDigest:
@@ -58,7 +59,9 @@ def run_pipeline(
     `select` runs only the named tables (by fqn or unambiguous bare name);
     `with_dependents` extends that to the full descendant closure - the
     CI/CD mode from part 1, where a changed table's dependents get rebuilt
-    too. `init` is the run-level "full reload" parameter.
+    too. `with_ancestors` extends it to everything the selection transitively
+    reads (a gold table with all its upstream tables); both can be combined.
+    `init` is the run-level "full reload" parameter.
 
     `observer` (a `RunObserver`, or a list of them) watches the run while it
     happens - e.g. `pipetree.notebook.LiveGraphView` in a notebook cell, or
@@ -71,7 +74,7 @@ def run_pipeline(
     config = PipelineConfig.from_validated_raw(raw)
     graph = build_graph(config, base_dir=config_path.parent)
 
-    selected = resolve_selection(graph, select, with_dependents)
+    selected = resolve_selection(graph, select, with_dependents, with_ancestors)
     if selected is not None and not with_dependents:
         _logger.warning(
             "running a subtree in isolation (--select without --with-dependents) can leave "
