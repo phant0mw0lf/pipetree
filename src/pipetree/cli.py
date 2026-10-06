@@ -46,6 +46,12 @@ def main() -> None:
     help="Extend --select to every table downstream of it (the CI/CD subtree mode).",
 )
 @click.option(
+    "--with-ancestors",
+    is_flag=True,
+    default=False,
+    help="Extend --select to every table upstream of it (what it transitively reads).",
+)
+@click.option(
     "--init",
     is_flag=True,
     default=False,
@@ -64,6 +70,7 @@ def run(
     max_workers: int,
     select_arg: str | None,
     with_dependents: bool,
+    with_ancestors: bool,
     init: bool,
     live_html: Path | None,
 ) -> None:
@@ -83,6 +90,7 @@ def run(
             max_workers=max_workers,
             select=select,
             with_dependents=with_dependents,
+            with_ancestors=with_ancestors,
             init=init,
             observer=observer,
         )

@@ -113,6 +113,7 @@ def test_run_passes_select_with_dependents_and_init_through(tmp_path: Path, monk
             "--select",
             "bronze.customer,silver.x",
             "--with-dependents",
+            "--with-ancestors",
             "--init",
         ],
     )
@@ -120,6 +121,7 @@ def test_run_passes_select_with_dependents_and_init_through(tmp_path: Path, monk
     assert result.exit_code == 0
     assert calls["select"] == ["bronze.customer", "silver.x"]
     assert calls["with_dependents"] is True
+    assert calls["with_ancestors"] is True
     assert calls["init"] is True
 
 
@@ -140,6 +142,7 @@ def test_run_without_select_passes_none(tmp_path: Path, monkeypatch):
 
     assert calls["select"] is None
     assert calls["with_dependents"] is False
+    assert calls["with_ancestors"] is False
     assert calls["init"] is False
 
 
