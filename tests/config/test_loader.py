@@ -212,3 +212,62 @@ silver:
         load_config(path)
 
     assert exc_info.value.path == "silver.tables.customer_enriched.depends_on"
+
+
+# ------------------------------------------------------------ surrogate_key
+
+
+def _sk_config(**table_overrides) -> dict:
+    table = {
+        "logic": "dim.sql",
+        "business_key": ["product_id"],
+        "strategy": "scd2",
+        "surrogate_key": "product_sid",
+        **table_overrides,
+    }
+    return {"systems": {}, "gold": {"tables": {"dim_product": table}}}
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_accepts_surrogate_key_on_scd1_and_scd2(strategy):
+    from pipetree.config.loader import validate_raw
+    from pipetree.model import PipelineConfig
+
+    raw = _sk_config(strategy=strategy)
+    validate_raw(raw)
+
+    table = PipelineConfig.from_validated_raw(raw).tables["gold.dim_product"]
+    assert table.surrogate_key == "product_sid"
+
+
+def test_surrogate_key_defaults_to_none():
+    from pipetree.model import PipelineConfig
+
+    raw = _sk_config()
+    del raw["gold"]["tables"]["dim_product"]["surrogate_key"]
+
+    assert PipelineConfig.from_validated_raw(raw).tables["gold.dim_product"].surrogate_key is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"strategy": "replace"}, "only valid for scd1/scd2"),
+        ({"strategy": "append"}, "only valid for scd1/scd2"),
+        ({"business_key": []}, "requires 'business_key'"),
+        ({"surrogate_key": "product_id"}, "collides with business key"),
+        ({"surrogate_key": "_execution_id"}, "reserved"),
+        ({"surrogate_key": "_valid_from"}, "reserved"),
+        ({"surrogate_key": "__pipetree_is_delete__"}, "reserved"),
+        ({"surrogate_key": ""}, "non-empty column name"),
+        ({"surrogate_key": ["a"]}, "non-empty column name"),
+    ],
+)
+def test_rejects_invalid_surrogate_key(overrides, reason):
+    from pipetree.config.loader import validate_raw
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_raw(_sk_config(**overrides))
+
+    assert "gold.tables.dim_product.surrogate_key" in str(exc_info.value)
+    assert reason in str(exc_info.value)
