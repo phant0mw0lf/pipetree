@@ -19,6 +19,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 from pipetree.adapters.base import Capabilities
 from pipetree.adapters.spark.merge import (
+    drop_null_business_keys,
     merge_append,
     merge_replace,
     merge_scd1,
@@ -79,9 +80,12 @@ class SparkAdapter:
         # source read and a logic file alike: whatever audit columns the
         # input inherited, the merge below stamps this table's own.
         source_df = strip_reserved_columns(source_df, table)
+        source_df, null_keys_dropped = drop_null_business_keys(source_df, table)
 
         merge_fn = _MERGE_FUNCTIONS[table.strategy]
         result = merge_fn(self._spark, table, source_df, execution_id, source_system, init)
+        if null_keys_dropped:
+            result["null_keys_dropped"] = null_keys_dropped
 
         if table.unknown_member:
             seed_unknown_member(self._spark, table, execution_id)

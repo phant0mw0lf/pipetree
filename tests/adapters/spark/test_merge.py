@@ -1,9 +1,12 @@
+import datetime
+import decimal
 import logging
 from typing import Any
 
 import pytest
 
 from pipetree.adapters.spark.merge import (
+    drop_null_business_keys,
     merge_append,
     merge_replace,
     merge_scd1,
@@ -14,6 +17,8 @@ from pipetree.adapters.spark.merge import (
 from pipetree.model import Table
 
 pytestmark = pytest.mark.spark
+
+DATE_2026 = datetime.date(2026, 1, 1)
 
 
 def make_table(name: str, strategy: str, **overrides: Any) -> Table:
@@ -323,6 +328,154 @@ def test_seed_unknown_member_is_idempotent(spark):
     assert len(spark.table(table.fqn).filter("id = -1").collect()) == 1
 
 
+@pytest.mark.parametrize(
+    ("name", "ddl_type", "real_value", "expected_sentinel"),
+    [
+        ("dim_int", "INT", 1, -1),
+        ("dim_bigint", "BIGINT", 1, -1),
+        ("dim_dec", "DECIMAL(10,0)", decimal.Decimal(1), decimal.Decimal(-1)),
+        ("dim_dbl", "DOUBLE", 1.0, -1.0),
+        ("dim_str", "STRING", "DE", None),
+        ("dim_date", "DATE", datetime.date(2026, 1, 1), datetime.date(1900, 1, 1)),
+        (
+            "dim_ts",
+            "TIMESTAMP",
+            datetime.datetime(2026, 1, 1),
+            datetime.datetime(1900, 1, 1),
+        ),
+    ],
+)
+def test_seed_unknown_member_uses_a_sentinel_of_the_business_keys_type(
+    spark, name, ddl_type, real_value, expected_sentinel
+):
+    table = make_table(name, "scd1", unknown_member=True)
+    source = spark.createDataFrame([(real_value, "x")], f"id {ddl_type}, name STRING")
+    merge_scd1(spark, table, source, 1, "crm")
+
+    seed_unknown_member(spark, table, execution_id=1)
+    seed_unknown_member(spark, table, execution_id=2)  # still idempotent
+
+    keys = [r["id"] for r in spark.table(table.fqn).collect()]
+    assert sorted(keys, key=str) == sorted([real_value, expected_sentinel], key=str)
+
+
+def _unknown_rows(spark, fqn, key_sql):
+    return spark.table(fqn).filter(key_sql).collect()
+
+
+def test_string_unknown_member_is_null_and_seeding_twice_keeps_one_row(spark):
+    table = make_table("dim_null1", "scd1", unknown_member=True)
+    merge_scd1(spark, table, spark.createDataFrame([("DE", "x")], "id STRING, name STRING"), 1, "c")
+
+    seed_unknown_member(spark, table, execution_id=1)
+    seed_unknown_member(spark, table, execution_id=2)
+    seed_unknown_member(spark, table, execution_id=3)
+
+    unknown = _unknown_rows(spark, table.fqn, "id IS NULL")
+    assert len(unknown) == 1
+    assert unknown[0]["_execution_id"] == 1
+    assert spark.table(table.fqn).count() == 2
+
+
+def test_composite_key_unknown_member_uses_a_sentinel_per_column(spark):
+    table = make_table("dim_comp1", "scd1", unknown_member=True, business_key=["id", "code"])
+    merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame(
+            [(1, "DE", DATE_2026, "x")], "id INT, code STRING, d DATE, name STRING"
+        ),
+        1,
+        "c",
+    )
+
+    seed_unknown_member(spark, table, execution_id=1)
+    seed_unknown_member(spark, table, execution_id=2)
+
+    unknown = _unknown_rows(spark, table.fqn, "id = -1")
+    assert len(unknown) == 1
+    assert unknown[0]["code"] is None
+    assert unknown[0]["d"] is None  # not a key column: left NULL
+
+
+def test_composite_key_unknown_member_with_a_date_column(spark):
+    table = make_table("dim_comp2", "scd1", unknown_member=True, business_key=["code", "d"])
+    merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([("DE", DATE_2026, "x")], "code STRING, d DATE, name STRING"),
+        1,
+        "c",
+    )
+
+    seed_unknown_member(spark, table, execution_id=1)
+    seed_unknown_member(spark, table, execution_id=2)
+
+    unknown = _unknown_rows(spark, table.fqn, "code IS NULL")
+    assert len(unknown) == 1
+    assert unknown[0]["d"] == datetime.date(1900, 1, 1)
+
+
+def test_a_legacy_composite_unknown_member_is_recognised_as_already_seeded(spark):
+    # Before per-column sentinels, a composite key got -1 in its first
+    # column and NULL in the rest. Upgrading must not seed a second row.
+    table = make_table("dim_comp3", "scd1", unknown_member=True, business_key=["id", "sub"])
+    merge_scd1(
+        spark, table, spark.createDataFrame([(1, 1, "x")], "id INT, sub INT, name STRING"), 1, "c"
+    )
+    spark.sql(
+        f"INSERT INTO {table.fqn} "
+        "SELECT -1, CAST(NULL AS INT), CAST(NULL AS STRING), 0L, 0L, false, 1L, "
+        "CAST(NULL AS STRING)"
+    )
+
+    seed_unknown_member(spark, table, execution_id=2)
+
+    assert len(_unknown_rows(spark, table.fqn, "id = -1")) == 1
+
+
+def test_scd1_remerge_leaves_a_null_keyed_unknown_member_alone(spark):
+    table = make_table("dim_null2", "scd1", unknown_member=True)
+    merge_scd1(spark, table, spark.createDataFrame([("DE", "x")], "id STRING, name STRING"), 1, "c")
+    seed_unknown_member(spark, table, execution_id=1)
+
+    merge_scd1(spark, table, spark.createDataFrame([("DE", "y")], "id STRING, name STRING"), 2, "c")
+    seed_unknown_member(spark, table, execution_id=2)
+
+    written = spark.table(table.fqn).collect()
+    assert len(written) == 2
+    unknown = [r for r in written if r["id"] is None]
+    assert len(unknown) == 1
+    assert unknown[0]["_execution_id"] == 1  # not touched by the second merge
+    assert [r["name"] for r in written if r["id"] == "DE"] == ["y"]
+
+
+def test_scd2_remerge_does_not_version_a_null_keyed_unknown_member(spark):
+    table = make_table("dim_null3", "scd2", unknown_member=True)
+    merge_scd2(spark, table, spark.createDataFrame([("DE", "x")], "id STRING, name STRING"), 1, "c")
+    seed_unknown_member(spark, table, execution_id=1)
+
+    merge_scd2(spark, table, spark.createDataFrame([("DE", "y")], "id STRING, name STRING"), 2, "c")
+    seed_unknown_member(spark, table, execution_id=2)
+
+    unknown = _unknown_rows(spark, table.fqn, "id IS NULL")
+    assert len(unknown) == 1
+    assert unknown[0]["_is_current"] is True
+    assert unknown[0]["_valid_to"] is None
+    real = _unknown_rows(spark, table.fqn, "id = 'DE'")
+    assert len(real) == 2  # the real row was versioned, as before
+
+
+def test_seed_unknown_member_rejects_a_key_type_with_no_sentinel(spark):
+    table = make_table("dim_bool", "scd1", unknown_member=True)
+    merge_scd1(
+        spark, table, spark.createDataFrame([(True, "x")], "id BOOLEAN, name STRING"), 1, "c"
+    )
+
+    with pytest.raises(ValueError, match="unknown_member.*boolean"):
+        seed_unknown_member(spark, table, execution_id=1)
+
+
 # ------------------------------------------------------------------- init
 
 
@@ -510,3 +663,25 @@ def test_strip_reserved_columns_is_a_noop_without_reserved_columns(spark, caplog
 
     assert stripped is source
     assert caplog.text == ""
+
+
+def test_drop_null_business_keys_drops_a_null_in_any_key_column(spark):
+    table = make_table("dropnull1", "scd1", unknown_member=True, business_key=["id", "code"])
+    source = spark.createDataFrame(
+        [(1, "DE"), (2, None), (None, "FR"), (3, "IT")], "id INT, code STRING"
+    )
+
+    kept, dropped = drop_null_business_keys(source, table)
+
+    assert dropped == 2
+    assert sorted(r["id"] for r in kept.collect()) == [1, 3]
+
+
+def test_drop_null_business_keys_is_a_noop_without_unknown_member(spark):
+    table = make_table("dropnull2", "scd1")
+    source = spark.createDataFrame([(None, "x")], "id STRING, name STRING")
+
+    kept, dropped = drop_null_business_keys(source, table)
+
+    assert kept is source
+    assert dropped == 0
