@@ -93,9 +93,11 @@ def validate(config_path: Path) -> None:
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["text", "mermaid"]),
+    type=click.Choice(["text", "mermaid", "html"]),
     default="text",
     show_default=True,
+    help="html: one self-contained page (inline CSS + SVG) with the tree laid out in "
+    "waves - redirect it to a file and open it in a browser.",
 )
 def graph(config_path: Path, fmt: str) -> None:
     """Print the dependency tree derived from --config."""

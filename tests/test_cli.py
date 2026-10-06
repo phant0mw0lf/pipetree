@@ -175,3 +175,18 @@ def test_graph_reports_a_config_error_cleanly(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "bronze.tables.customer" in result.output
+
+
+def test_graph_renders_html_on_request_with_every_table_pending(tmp_path: Path):
+    (tmp_path / "notebooks").mkdir()
+    (tmp_path / "notebooks" / "customer_enriched.sql").write_text("SELECT 1")
+    config_path = write(tmp_path, CHAIN_CONFIG)
+
+    result = CliRunner().invoke(main, ["graph", "--config", str(config_path), "--format", "html"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("<!DOCTYPE html>")
+    assert 'data-fqn="bronze.customer"' in result.output
+    assert 'data-fqn="silver.customer_enriched"' in result.output
+    assert 'data-status="pending"' in result.output
+    assert "http-equiv" not in result.output
