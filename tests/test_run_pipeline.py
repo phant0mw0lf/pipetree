@@ -161,3 +161,37 @@ def test_init_flag_reaches_the_adapter(tmp_path: Path):
     run_pipeline(config_path, adapter=adapter, execution_id=1, init=True)
 
     assert adapter.init_calls == ["bronze.customer"]
+
+
+class RecordingObserver:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def on_run_start(self, graph, run_set, execution_id) -> None:
+        self.calls.append(f"start:{sorted(run_set)}")
+
+    def on_table_event(self, event) -> None:
+        self.calls.append(f"{event.fqn}:{event.status}")
+
+    def on_run_end(self, digest) -> None:
+        self.calls.append("end")
+
+
+def test_run_pipeline_passes_the_observer_through_to_the_executor(tmp_path: Path):
+    config_path = write_config(tmp_path)
+    observer = RecordingObserver()
+
+    run_pipeline(
+        config_path,
+        adapter=FakeAdapter(),
+        execution_id=1,
+        observer=observer,
+        notifier=RecordingNotifier(),
+    )
+
+    assert observer.calls == [
+        "start:['bronze.customer']",
+        "bronze.customer:running",
+        "bronze.customer:succeeded",
+        "end",
+    ]

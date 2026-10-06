@@ -8,7 +8,7 @@ from typing import Literal
 
 from pipetree.graph.builder import Graph
 
-Format = Literal["text", "mermaid"]
+Format = Literal["text", "mermaid", "html"]
 
 
 def render_graph(graph: Graph, fmt: str = "text") -> str:
@@ -19,7 +19,13 @@ def render_graph(graph: Graph, fmt: str = "text") -> str:
         return _render_text(graph)
     if fmt == "mermaid":
         return _render_mermaid(graph)
-    raise ValueError(f"{fmt!r} is not a supported format (expected 'text' or 'mermaid')")
+    if fmt == "html":
+        # Imported here: the HTML renderer is the one format that knows
+        # about run progress, and text/mermaid callers shouldn't pay for it.
+        from pipetree.graph.html import render_html_page
+
+        return render_html_page(graph, title="pipetree graph")
+    raise ValueError(f"{fmt!r} is not a supported format (expected 'text', 'mermaid' or 'html')")
 
 
 def _render_text(graph: Graph) -> str:

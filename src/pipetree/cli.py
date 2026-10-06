@@ -51,15 +51,31 @@ def main() -> None:
     default=False,
     help="Full reload: treat every run table as if seeding fresh.",
 )
+@click.option(
+    "--live-html",
+    "live_html",
+    default=None,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Keep an HTML picture of the dependency tree at this path, rewritten as tables "
+    "run and finish. Open it in a browser: it refreshes itself until the run ends.",
+)
 def run(
     config_path: Path,
     max_workers: int,
     select_arg: str | None,
     with_dependents: bool,
     init: bool,
+    live_html: Path | None,
 ) -> None:
     """Run the pipeline described by --config."""
     select = [name.strip() for name in select_arg.split(",")] if select_arg else None
+
+    observer = None
+    if live_html is not None:
+        from pipetree.notebook import HtmlFileObserver
+
+        observer = HtmlFileObserver(live_html, title=config_path.name)
+        click.echo(f"live view: {live_html}", err=True)
 
     try:
         digest = run_pipeline(
@@ -68,6 +84,7 @@ def run(
             select=select,
             with_dependents=with_dependents,
             init=init,
+            observer=observer,
         )
     except (ConfigError, GraphError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -93,9 +110,11 @@ def validate(config_path: Path) -> None:
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["text", "mermaid"]),
+    type=click.Choice(["text", "mermaid", "html"]),
     default="text",
     show_default=True,
+    help="html: one self-contained page (inline CSS + SVG) with the tree laid out in "
+    "waves - redirect it to a file and open it in a browser.",
 )
 def graph(config_path: Path, fmt: str) -> None:
     """Print the dependency tree derived from --config."""
