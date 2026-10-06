@@ -190,3 +190,71 @@ def test_graph_renders_html_on_request_with_every_table_pending(tmp_path: Path):
     assert 'data-fqn="silver.customer_enriched"' in result.output
     assert 'data-status="pending"' in result.output
     assert "http-equiv" not in result.output
+
+
+def test_run_live_html_passes_a_file_observer(tmp_path: Path, monkeypatch):
+    from pipetree.notebook import HtmlFileObserver
+
+    config_path = write(tmp_path, VALID_CONFIG)
+    calls: dict = {}
+
+    class FakeDigest:
+        exit_code = 0
+
+    def fake_run_pipeline(path, **kwargs):
+        calls.update(kwargs)
+        return FakeDigest()
+
+    monkeypatch.setattr("pipetree.cli.run_pipeline", fake_run_pipeline)
+    target = tmp_path / "live" / "run.html"
+
+    result = CliRunner().invoke(
+        main, ["run", "--config", str(config_path), "--live-html", str(target)]
+    )
+
+    assert result.exit_code == 0
+    assert isinstance(calls["observer"], HtmlFileObserver)
+    assert calls["observer"].path == target
+    assert str(target) in result.output
+
+
+def test_run_without_live_html_passes_no_observer(tmp_path: Path, monkeypatch):
+    config_path = write(tmp_path, VALID_CONFIG)
+    calls: dict = {}
+
+    class FakeDigest:
+        exit_code = 0
+
+    def fake_run_pipeline(path, **kwargs):
+        calls.update(kwargs)
+        return FakeDigest()
+
+    monkeypatch.setattr("pipetree.cli.run_pipeline", fake_run_pipeline)
+
+    CliRunner().invoke(main, ["run", "--config", str(config_path)])
+
+    assert calls["observer"] is None
+
+
+def test_run_live_html_writes_a_final_page_for_a_real_run(tmp_path: Path, monkeypatch):
+    import pipetree
+
+    from .helpers import FakeAdapter
+
+    config_path = write(tmp_path, VALID_CONFIG)
+    real_run_pipeline = pipetree.run_pipeline
+
+    def run_with_fake_adapter(path, **kwargs):
+        return real_run_pipeline(path, adapter=FakeAdapter(), **kwargs)
+
+    monkeypatch.setattr("pipetree.cli.run_pipeline", run_with_fake_adapter)
+    target = tmp_path / "run.html"
+
+    result = CliRunner().invoke(
+        main, ["run", "--config", str(config_path), "--live-html", str(target)]
+    )
+
+    assert result.exit_code == 0, result.output
+    page = target.read_text(encoding="utf-8")
+    assert 'data-fqn="bronze.customer" data-status="succeeded"' in page
+    assert "http-equiv" not in page
