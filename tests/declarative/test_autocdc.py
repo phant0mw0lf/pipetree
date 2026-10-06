@@ -190,3 +190,10 @@ def test_custom_flow_name_is_used_when_given():
     sql = render_sql(make_flow(), flow_name="my_custom_flow")
 
     assert "CREATE FLOW my_custom_flow AS AUTO CDC INTO" in sql
+
+
+def test_refuses_a_surrogate_key_rather_than_silently_dropping_it():
+    table = make_table("scd2", surrogate_key="customer_sid")
+
+    with pytest.raises(ValueError, match="surrogate_key"):
+        translate_table(table, source="bronze_raw.customer")

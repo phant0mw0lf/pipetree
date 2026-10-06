@@ -57,6 +57,13 @@ def translate_table(table: Table, *, source: str) -> AutoCdcFlow:
     if not table.business_key:
         raise ValueError(f"{table.fqn}: AUTO CDC requires a business_key (-> KEYS)")
 
+    if table.surrogate_key:
+        raise ValueError(
+            f"{table.fqn}: surrogate_key {table.surrogate_key!r} has no AUTO CDC translation "
+            "here - an identity column on an AUTO CDC target isn't modeled; generate the "
+            "surrogate key downstream of the flow instead"
+        )
+
     delete_when = table.merge.delete_when if table.merge.delete_mode != "ignore" else None
 
     return AutoCdcFlow(

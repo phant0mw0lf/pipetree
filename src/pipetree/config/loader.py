@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from pipetree.config.errors import ConfigError
+from pipetree.model import DELETE_MARKER_COLUMN, RESERVED_AUDIT_COLUMNS
 
 RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems"}
 # Order matches the post's schema (`scd2 | scd1 | replace | append`,
@@ -114,6 +115,30 @@ def _validate_table(path: str, table: Any, systems: dict[str, Any]) -> None:
     unknown_member = table.get("unknown_member")
     if unknown_member and not table.get("business_key"):
         raise ConfigError(path=f"{path}.unknown_member", reason="requires 'business_key' to be set")
+
+    if "surrogate_key" in table:
+        _validate_surrogate_key(f"{path}.surrogate_key", table, strategy)
+
+
+def _validate_surrogate_key(path: str, table: dict[str, Any], strategy: str) -> None:
+    name = table["surrogate_key"]
+    if not isinstance(name, str) or not name:
+        raise ConfigError(path=path, reason="must be a non-empty column name")
+    if strategy not in ("scd1", "scd2"):
+        raise ConfigError(
+            path=path,
+            reason=(
+                f"is only valid for scd1/scd2, not {strategy!r} (replace rewrites the "
+                "table and would renumber every key; append has no business key)"
+            ),
+        )
+    business_key = table.get("business_key") or []
+    if not business_key:
+        raise ConfigError(path=path, reason="requires 'business_key' to be set")
+    if name in business_key:
+        raise ConfigError(path=path, reason=f"{name!r} collides with business key column")
+    if name in RESERVED_AUDIT_COLUMNS or name == DELETE_MARKER_COLUMN:
+        raise ConfigError(path=path, reason=f"{name!r} is a reserved pipetree column")
 
 
 def _validate_source(path: str, source: Any, systems: dict[str, Any]) -> None:
