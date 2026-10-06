@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from pipetree.platform.base import Platform
 from pipetree.platform.fabric import FabricPlatform
 
@@ -73,12 +75,69 @@ class FakeCredentialsWithToken(FakeCredentials):
         return self._token
 
 
+def make_token_platform(
+    token: str = "fabric-token",
+) -> tuple[FabricPlatform, FakeCredentialsWithToken]:
+    credentials = FakeCredentialsWithToken({}, token=token)
+    platform = FabricPlatform(
+        FakeNotebookUtils(credentials), key_vault_url="https://kv.vault.azure.net/"
+    )
+    return platform, credentials
+
+
 def test_acquire_token_delegates_to_notebookutils_get_token():
-    credentials = FakeCredentialsWithToken({}, token="fabric-token")
-    notebookutils = FakeNotebookUtils(credentials)
-    platform = FabricPlatform(notebookutils, key_vault_url="https://kv.vault.azure.net/")
+    platform, credentials = make_token_platform()
 
     result = platform.acquire_token("https://database.windows.net/")
 
     assert result == "fabric-token"
     assert credentials.requested_resource == "https://database.windows.net/"
+
+
+@pytest.mark.parametrize(
+    "resource", ["https://api.kusto.windows.net", "https://api.kusto.windows.net/"]
+)
+def test_acquire_token_maps_the_generic_adx_audience_to_the_kusto_key(resource):
+    # `kusto` is getToken's documented audience key for Azure Data Explorer;
+    # the cluster-independent `https://api.kusto.windows.net` URI isn't.
+    platform, credentials = make_token_platform()
+
+    platform.acquire_token(resource)
+
+    assert credentials.requested_resource == "kusto"
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        # Microsoft's Synapse->Fabric migration guide passes the cluster URI as-is.
+        "https://mycluster.westeurope.kusto.windows.net",
+        "https://storage.azure.com/",
+        "storage",
+        "kusto",
+    ],
+)
+def test_acquire_token_passes_other_resources_through_unchanged(resource):
+    platform, credentials = make_token_platform()
+
+    platform.acquire_token(resource)
+
+    assert credentials.requested_resource == resource
+
+
+def test_acquire_token_wraps_get_token_failures_with_the_resource_and_supported_set():
+    class FailingCredentials(FakeCredentials):
+        def getToken(self, resource: str) -> str:  # noqa: N802 - matches Fabric's real API
+            raise Exception(f"{resource} is not a valid resource")  # noqa: TRY002 - stands in for a Py4J error
+
+    platform = FabricPlatform(
+        FakeNotebookUtils(FailingCredentials({})), key_vault_url="https://kv.vault.azure.net/"
+    )
+
+    with pytest.raises(RuntimeError, match="api://marketing-app") as excinfo:
+        platform.acquire_token("api://marketing-app")
+
+    message = str(excinfo.value)
+    assert "limited set of audiences" in message
+    assert "kusto" in message
+    assert isinstance(excinfo.value.__cause__, Exception)

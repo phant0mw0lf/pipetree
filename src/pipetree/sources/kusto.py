@@ -1,17 +1,55 @@
 """Read for Azure Data Explorer / Fabric Eventhouse via the Kusto Spark
-connector. The connector jar is a session-building concern, not a
-read-time one: whoever builds the SparkSession needs `MAVEN_COORDINATE`
-on its classpath (a `--packages` dependency, the same idea as
-`configure_spark_with_delta_pip` for Delta) before this reader can work.
+connector (azure-kusto-spark). The connector jar is a session-building
+concern, not a read-time one: whoever builds the SparkSession needs
+`MAVEN_COORDINATE` on its classpath (a `--packages` dependency or a
+cluster library, the same idea as `configure_spark_with_delta_pip` for
+Delta) before this reader can work.
 
-**`MAVEN_COORDINATE` is unverified** - pin it to whatever's current for
-your Spark/Scala version when you actually wire this up; it's a
-plausible-looking default, not a tested one.
+**Option names - checked against the connector source at tag
+`v4.0_7.1.4`** (`common/KustoOptions.scala`,
+`datasource/KustoSourceOptions.scala`, `datasink/KustoSinkOptions.scala`,
+`datasource/DefaultSource.scala`) and its `docs/KustoSource.md` /
+`docs/Authentication.md`:
 
-**`kustoAccessToken` (the option `auth.mode: aad_token` sets) is a
-plausible-looking option name for passing a pre-acquired AAD token
-directly, same caveat as `MAVEN_COORDINATE` above - verify it against
-the connector version actually pinned before relying on it.
+- `kustoCluster`, `kustoDatabase` - mandatory; a full
+  `https://<cluster>.<region>.kusto.windows.net` URL is accepted as well
+  as an alias.
+- `kustoQuery` drives a read; "a flexible Kusto query (can simply be a
+  table name)". The table's `source.object` is sent as that query, so a
+  read is a whole-table read. `kustoTable` is a *sink* (write) option -
+  the read path ignores it and would run an empty query.
+- `auth.mode: aad_token` -> `accessToken` (`KUSTO_ACCESS_TOKEN`).
+- `auth.mode: app_secret` -> `kustoAadAppId`, `kustoAadAppSecret`,
+  `kustoAadAuthorityID` (the tenant id).
+
+**`MAVEN_COORDINATE`** is the Spark 4.0 / Scala 2.13 build, matching
+pipetree's pyspark 4 requirement; 7.1.4 is the latest
+`kusto-spark_4.0_2.13` release on Maven Central, and its POM declares
+`spark-sql_2.13` 4.0.0 and Scala 2.13 as provided. The older
+`kusto-spark_3.0_2.12` artifacts can't load on a Scala 2.13 runtime.
+
+**Token lifetime:** with `aad_token`, one token is minted on the driver
+(`Platform.acquire_token`) and handed to the connector as a static string;
+the connector's docs require it to stay "valid throughout the duration of
+the read/write operation", and nothing refreshes it on executors.
+Microsoft Entra's default access-token lifetime is a random 60-90 minutes
+(the exact lifetime depends on the identity type), so a very long read can
+outlive its token. (The connector's `tokenProviderCallbackClasspath`
+option, a JVM callback called per request, is the refreshable
+alternative; it isn't wired up here.)
+
+**Still unverified** without a real cluster: an end-to-end read (connector
+on the classpath, the token's audience accepted by the cluster, the
+principal's Viewer grant), and large reads: when the connector estimates
+a query exceeds Kusto's query limits it switches to distributed mode,
+which exports to blob storage - storage from the Kusto ingest service
+unless `transientStorage` is set, which the connector's docs advise
+against in production. pipetree sets no read-mode or storage options.
+
+`auth.resource` (the `aad_token` audience) resolves through
+`resolve_value`, so it can be a literal (e.g.
+`https://api.kusto.windows.net`) or a `{secret: name}` reference (e.g. a
+per-environment cluster URI).
 """
 
 from __future__ import annotations
@@ -24,7 +62,7 @@ from pipetree.sources.base import SourceContext
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
 
-MAVEN_COORDINATE = "com.microsoft.azure.kusto:kusto-spark_3.0_2.12:5.0.5"
+MAVEN_COORDINATE = "com.microsoft.azure.kusto:kusto-spark_4.0_2.13:7.1.4"
 _FORMAT = "com.microsoft.kusto.spark.datasource"
 
 
@@ -51,13 +89,15 @@ class KustoSource:
             ctx.spark.read.format(_FORMAT)
             .option("kustoCluster", cluster)
             .option("kustoDatabase", database)
-            .option("kustoTable", table_name)
+            .option("kustoQuery", table_name)
         )
 
         if mode == "aad_token":
-            resource = _required(auth.get("resource"), "auth.resource", fqn)
+            resource = resolve_value(
+                _required(auth.get("resource"), "auth.resource", fqn), ctx.platform
+            )
             token = ctx.platform.acquire_token(resource)
-            reader = reader.option("kustoAccessToken", token)
+            reader = reader.option("accessToken", token)
         elif mode == "app_secret":
             app_id = resolve_value(_required(auth.get("appId"), "auth.appId", fqn), ctx.platform)
             app_secret = resolve_value(

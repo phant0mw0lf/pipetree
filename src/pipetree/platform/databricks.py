@@ -9,10 +9,19 @@ Access Connector for Azure Databricks (a UC-governed managed identity) and
 pass a `secret_resolver` callable that reads through it - the default
 dbutils path is convenience, not the only supported route.
 
-`acquire_token` is the token-based counterpart: a named Unity Catalog
-service credential (backed by the same Access Connector) is resolved via
-`dbutils.credentials.getServiceCredentialsFor(name)` - see Open risks in
-the scale-validation spec for this feature's maturity.
+`acquire_token` is the token-based counterpart: `service_credentials`
+maps each AAD resource to the name of a Unity Catalog service credential
+(backed by the same Access Connector).
+`dbutils.credentials.getServiceCredentialsProvider(name)` - the documented
+API (Azure Databricks "Use Unity Catalog service credentials") - returns an
+azure-core `TokenCredential`, and the token is
+`provider.get_token("<resource>/.default").token`, the same scope shape
+`LocalPlatform` requests. Requirements per that page: Databricks Runtime
+16.2+ (Public Preview, Python only, from 15.4 LTS), `ACCESS` on the
+credential, and not a SQL warehouse. The `dbutils` provider is a
+driver-side API - it isn't available inside UDFs, so a token minted here
+is a static string handed to whatever runs on executors and isn't
+refreshed there. Not yet exercised against a real workspace.
 
 `run_metadata` is supplied by the caller rather than pulled from
 `dbutils` here - extracting job/run id reliably means reaching into
@@ -80,7 +89,8 @@ class DatabricksPlatform:
             ) from None
         if self._dbutils is None:
             raise ValueError("acquire_token requires dbutils (a real Databricks runtime)")
-        return self._dbutils.credentials.getServiceCredentialsFor(credential_name)
+        provider = self._dbutils.credentials.getServiceCredentialsProvider(credential_name)
+        return provider.get_token(f"{resource.rstrip('/')}/.default").token
 
 
 def _dbutils_secret_resolver(dbutils: Any, secret_scope: str) -> Callable[[str], str]:

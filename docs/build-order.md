@@ -58,10 +58,16 @@ breaks) and the two `NOTES-for-blog.md` gaps flagged along the way (a
 production-scale approach for scd2's driver-side "changed rows"
 materialization; `append` schema-policy enforcement). Token-based
 (`aad_token`) auth was added to `sqlserver`/`kusto` and the platform seam
-for the pipetree-scale-bench project's secretless-connections requirement -
-real-workspace verification of `acquire_token` (the UC service credential
-call, the Fabric workspace-identity token call) is part of that project's
-own rollout, not this repo's test suite.
+for the pipetree-scale-bench project's secretless-connections requirement,
+then corrected against the real APIs: Databricks uses the documented
+`dbutils.credentials.getServiceCredentialsProvider(name)` (a
+`TokenCredential`, asked for `<resource>/.default`), Fabric maps
+`https://api.kusto.windows.net` to `getToken`'s `kusto` key and runs as the
+notebook's executing identity, and the `kusto` reader sends the table as
+`kustoQuery` with the token as `accessToken` against the Spark 4 / Scala
+2.13 connector (`kusto-spark_4.0_2.13:7.1.4`). Real-workspace verification
+of these calls is part of that project's own rollout, not this repo's test
+suite.
 
 Each phase is small commits, tests first. README and `NOTES-for-blog.md`
 were written during Phase A rather than held for the end, since that phase

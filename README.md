@@ -118,9 +118,18 @@ See the blog series for the full design rationale. In short:
   reference), `FabricPlatform` (`notebookutils.credentials`, the attached
   lakehouse's `Files/` mount). Every platform also implements
   `acquire_token(resource)` - a short-lived AAD token via the platform's
-  own identity (a Unity Catalog service credential on Databricks, the
-  workspace identity on Fabric, `DefaultAzureCredential` locally), for the
-  `sqlserver`/`kusto` sources' `auth.mode: aad_token` path. Secret-based
+  own identity, for the `sqlserver`/`kusto` sources' `auth.mode:
+  aad_token` path: on Databricks, a named Unity Catalog service credential
+  per resource (`dbutils.credentials.getServiceCredentialsProvider(name)`,
+  DBR 16.2+); on Fabric, `notebookutils.credentials.getToken`, which runs
+  as the notebook's *executing* identity (the user, the schedule owner, or
+  the pipeline's last modifier - the workspace identity only when a
+  pipeline Notebook activity uses a Workspace Identity connection) and
+  supports a limited set of audiences (`storage`, `pbi`, `keyvault`,
+  `kusto`, plus Kusto cluster URIs), so custom app audiences are
+  Databricks/local only; `DefaultAzureCredential` locally. Tokens are
+  minted once on the driver and not refreshed, so a read must finish
+  within the token's lifetime (60-90 minutes by default). Secret-based
   auth stays the default for anyone without managed-identity infrastructure
   available; token-based auth is additive, not a replacement. `detect()`
   picks one from runtime markers.
