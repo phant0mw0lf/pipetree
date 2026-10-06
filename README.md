@@ -62,8 +62,10 @@ add `--with-dependents` to extend that to the full descendant closure -
 the CI/CD mode from part 1, where a changed table's dependents get rebuilt
 too. `--with-ancestors` is the mirror image: everything the selection
 transitively reads, so `--select gold.fact_sales --with-ancestors` rebuilds one
-output together with all its upstream tables (combine both flags for both
-directions). `--init` is the run-level full-reload parameter: every selected table
+output together with all its upstream tables. Combine both flags and the
+dependents are added first, then every ancestor of everything that runs, so
+nothing runs on a parent that was left out. `--init` is the run-level
+full-reload parameter: every selected table
 is seeded from scratch rather than merged against what's already there.
 
 ## Seeing the run

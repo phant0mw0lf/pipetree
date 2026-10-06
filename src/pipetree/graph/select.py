@@ -27,8 +27,9 @@ def resolve_selection(
     Returns None (meaning "everything") when `select` is None. Raises
     `UnknownTableError` for a name that doesn't resolve to exactly one
     table. `with_dependents` adds every table downstream of the selection,
-    `with_ancestors` every table upstream of it; with both, each selected
-    table gets both closures (not the ancestors of its dependents).
+    `with_ancestors` every table upstream of everything that runs - so with
+    both, the dependents come first and their other parents are pulled in too:
+    nothing runs on a parent that was left out.
     """
     if select is None:
         return None
@@ -40,13 +41,12 @@ def resolve_selection(
             raise UnknownTableError(name)
         resolved.add(match)
 
-    closure = set(resolved)
     if with_dependents:
-        closure |= descendant_closure(graph, resolved)
+        resolved = descendant_closure(graph, resolved)
     if with_ancestors:
-        closure |= ancestor_closure(graph, resolved)
+        resolved = ancestor_closure(graph, resolved)
 
-    return closure
+    return resolved
 
 
 def descendant_closure(graph: Graph, seeds: set[str]) -> set[str]:

@@ -110,7 +110,7 @@ def test_with_ancestors_follows_every_parent_of_a_table_with_two_parents():
     assert result == {"gold.c", "silver.x", "bronze.a", "bronze.b"}
 
 
-def test_with_both_flags_selection_gets_both_closures_but_not_the_ancestors_of_dependents():
+def test_with_both_flags_every_table_that_runs_has_all_its_ancestors_running():
     graph = make_graph(
         {"bronze.a": "scd1", "silver.b": "replace", "gold.c": "replace", "bronze.other": "scd1"},
         edges={"silver.b": {"bronze.a"}, "gold.c": {"silver.b", "bronze.other"}},
@@ -118,8 +118,8 @@ def test_with_both_flags_selection_gets_both_closures_but_not_the_ancestors_of_d
 
     result = resolve_selection(graph, ["silver.b"], with_dependents=True, with_ancestors=True)
 
-    # gold.c is a dependent; its other parent bronze.other is not an ancestor of silver.b
-    assert result == {"bronze.a", "silver.b", "gold.c"}
+    # gold.c is a dependent; its other parent bronze.other must run too, or gold.c reads nothing
+    assert result == {"bronze.a", "silver.b", "gold.c", "bronze.other"}
 
 
 def test_with_ancestors_of_a_source_table_is_just_itself():
