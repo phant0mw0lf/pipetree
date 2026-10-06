@@ -117,6 +117,17 @@ See the blog series for the full design rationale. In short:
   the table's own. To use an upstream stamp downstream (e.g. in
   `delete_when` or `sequence_by`), alias it in the logic file
   (`_is_deleted AS upstream_is_deleted`).
+- **Unknown member** - `unknown_member: true` seeds one row whose business
+  key columns each hold a sentinel of their own type, for facts to resolve
+  a missing foreign key to: `-1` for a numeric key, SQL `NULL` for a
+  string, `1900-01-01` for a date or timestamp (other key types are
+  rejected; a composite key gets one sentinel per column). A fact reaches
+  a `NULL`-keyed unknown member with a null-safe join (`<=>` /
+  `eqNullSafe`); a plain `=` join behaves exactly as before for every
+  matched row. Seeding is null-safe and idempotent. On such a table a
+  source row with a `NULL` in any business key column is dropped (logged
+  as a warning, counted as `null_keys_dropped` in the run log) - `NULL`
+  is reserved for the unknown member there.
 - **Platforms** (`pipetree.platform`) answer "where am I running?" for
   secrets, table naming, storage paths and run metadata - `LocalPlatform`
   (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret

@@ -11,14 +11,29 @@ isn't re-evaluated against the table the merge just mutated.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import operator
+from decimal import Decimal
 from functools import reduce
 from typing import Any
 
 from delta.tables import DeltaTable
 from pyspark.sql import Column, DataFrame, Row, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    DataType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
+    IntegralType,
+    NumericType,
+    StringType,
+    StructType,
+    TimestampNTZType,
+    TimestampType,
+)
 
 from pipetree.adapters.spark.audit import (
     insert_audit_values,
@@ -280,23 +295,29 @@ def merge_scd2(
 
 
 def seed_unknown_member(spark: SparkSession, table: Table, execution_id: int) -> None:
-    """Seed the default -1 unknown member so facts can resolve a missing
-    foreign key to it instead of leaving a NULL. A no-op if the table
-    doesn't ask for it, doesn't exist yet, or already has one."""
+    """Seed the unknown member so facts can resolve a missing foreign key to
+    it instead of leaving a NULL. A no-op if the table doesn't ask for it,
+    doesn't exist yet, or already has one.
+
+    Every business key column gets a sentinel of its own type (see
+    `unknown_member_key`): `-1` for a numeric key, SQL NULL for a string,
+    1900-01-01 for a date or timestamp. Matching is null-safe throughout,
+    so re-seeding never adds a second row; `drop_null_business_keys` keeps
+    a source's own NULL keys from colliding with it."""
     if not table.unknown_member or not table.business_key:
         return
     if not _table_exists(spark, table.fqn):
         return
 
-    key_col = table.business_key[0]
-    already_seeded = spark.table(table.fqn).filter(F.col(key_col) == -1).limit(1).count() > 0
-    if already_seeded:
+    existing = spark.table(table.fqn)
+    schema = existing.schema
+    sentinels = {k: unknown_member_key(schema[k].dataType, table.fqn) for k in table.business_key}
+    if existing.filter(_is_unknown_member(table, schema, sentinels)).limit(1).count() > 0:
         return
 
-    schema = spark.table(table.fqn).schema
     now = timestamp_bigint()
     values: dict[str, Any] = dict.fromkeys(f.name for f in schema.fields)
-    values[key_col] = -1
+    values.update(sentinels)
     values.update(
         {
             "_inserted_at": now,
@@ -313,6 +334,74 @@ def seed_unknown_member(spark: SparkSession, table: Table, execution_id: int) ->
     row = Row(**{f.name: values[f.name] for f in schema.fields})
     spark.createDataFrame([row], schema=schema).write.format("delta").mode("append").saveAsTable(
         table.fqn
+    )
+
+
+def drop_null_business_keys(source: DataFrame, table: Table) -> tuple[DataFrame, int]:
+    """On an `unknown_member` table, drop source rows with a NULL in any
+    business key column, returning how many were dropped.
+
+    NULL is the unknown member's key for a string column, so a source row
+    with a NULL key would be indistinguishable from it in a null-safe fact
+    join - and, never matching an `=` merge condition, it would be
+    re-inserted on every scd1/scd2 run besides. A no-op (no count, no scan)
+    on any other table."""
+    if not table.unknown_member or not table.business_key:
+        return source, 0
+    any_null = reduce(operator.or_, [F.col(k).isNull() for k in table.business_key])
+    dropped = source.filter(any_null).count()
+    if dropped == 0:
+        return source, 0
+    _logger.warning(
+        "%s: dropped %d source row(s) with a NULL business key (%s) - NULL is "
+        "reserved for the unknown member on an unknown_member table",
+        table.fqn,
+        dropped,
+        ", ".join(table.business_key),
+    )
+    return source.filter(~any_null), dropped
+
+
+def _is_unknown_member(table: Table, schema: StructType, sentinels: dict[str, Any]) -> Column:
+    """Null-safe "is this row the unknown member?" across every key column."""
+    current = reduce(
+        operator.and_,
+        [F.col(k).eqNullSafe(F.lit(v).cast(schema[k].dataType)) for k, v in sentinels.items()],
+    )
+    first, *rest = table.business_key
+    if not rest or not isinstance(schema[first].dataType, NumericType):
+        return current
+    # Before per-column sentinels, a composite key got -1 in its first
+    # column and NULL in the rest - still the unknown member after upgrade.
+    legacy = reduce(
+        operator.and_,
+        [F.col(first).eqNullSafe(F.lit(-1).cast(schema[first].dataType))]
+        + [F.col(k).isNull() for k in rest],
+    )
+    return current | legacy
+
+
+def unknown_member_key(key_type: DataType, table_fqn: str) -> Any:
+    """The unknown member's key value, in the business key's own type - the
+    value a fact's `COALESCE(fk, <this>)` must use to resolve to it. `None`
+    (SQL NULL) for a string key: a fact reaches it with a null-safe join
+    (`<=>` / `eqNullSafe`), not `=`."""
+    if isinstance(key_type, DecimalType):
+        return Decimal(-1)
+    if isinstance(key_type, FloatType | DoubleType):
+        return -1.0
+    if isinstance(key_type, IntegralType):
+        return -1
+    if isinstance(key_type, StringType):
+        return None
+    if isinstance(key_type, TimestampType | TimestampNTZType):
+        return datetime.datetime(1900, 1, 1)
+    if isinstance(key_type, DateType):
+        return datetime.date(1900, 1, 1)
+    raise ValueError(
+        f"{table_fqn}: unknown_member has no sentinel for a "
+        f"{key_type.simpleString()} business key (supported: numeric, string, "
+        "date, timestamp)"
     )
 
 

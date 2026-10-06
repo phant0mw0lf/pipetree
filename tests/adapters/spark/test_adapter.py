@@ -418,3 +418,151 @@ def test_an_aliased_upstream_stamp_still_drives_delete_when(spark, tmp_path):
     adapter.run_table(downstream, execution_id=2)
 
     assert {r["id"] for r in spark.table(downstream.fqn).collect()} == {1}
+
+
+def test_run_table_seeds_unknown_member_for_date_and_string_keys(spark, tmp_path):
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    (tmp_path / "dim_date.sql").write_text("SELECT DATE'2026-01-01' AS date, 2026 AS year")
+    (tmp_path / "dim_geo.sql").write_text("SELECT 'DE' AS country_code, 'Germany' AS name")
+    dim_date = make_table(
+        logic="dim_date.sql",
+        strategy="scd1",
+        fqn="gold_um.dim_date",
+        source=None,
+        business_key=["date"],
+        unknown_member=True,
+    )
+    dim_geo = make_table(
+        logic="dim_geo.sql",
+        strategy="scd2",
+        fqn="gold_um.dim_geography",
+        source=None,
+        business_key=["country_code"],
+        unknown_member=True,
+    )
+
+    adapter.run_table(dim_date, execution_id=1)
+    adapter.run_table(dim_geo, execution_id=1)
+
+    dates = {str(r["date"]) for r in spark.table(dim_date.fqn).collect()}
+    codes = {r["country_code"] for r in spark.table(dim_geo.fqn).collect()}
+    assert dates == {"2026-01-01", "1900-01-01"}
+    assert codes == {"DE", None}
+
+
+def _string_dim(tmp_path, strategy: str, fqn: str, sql: str):
+    (tmp_path / "geo.sql").write_text(sql)
+    return make_table(
+        logic="geo.sql",
+        strategy=strategy,
+        fqn=fqn,
+        source=None,
+        business_key=["country_code"],
+        unknown_member=True,
+    )
+
+
+@pytest.mark.parametrize("strategy", ["replace", "scd1", "scd2", "append"])
+def test_running_a_string_keyed_dim_twice_keeps_exactly_one_null_unknown_member(
+    spark, tmp_path, strategy
+):
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _string_dim(
+        tmp_path,
+        strategy,
+        f"gold_null_{strategy}.dim_geography",
+        "SELECT 'DE' AS country_code, 'Germany' AS name UNION ALL SELECT 'FR', 'France'",
+    )
+
+    adapter.run_table(table, execution_id=1)
+    adapter.run_table(table, execution_id=2)
+
+    written = spark.table(table.fqn)
+    if strategy == "scd2":
+        written = written.filter("_is_current")
+    keys = sorted((r["country_code"] or "<null>") for r in written.collect())
+    if strategy == "append":
+        assert keys == ["<null>", "DE", "DE", "FR", "FR"]  # append appends; unknown once
+    else:
+        assert keys == ["<null>", "DE", "FR"]
+
+
+def test_null_source_keys_are_dropped_on_an_unknown_member_table(spark, tmp_path, caplog):
+    import logging
+
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _string_dim(
+        tmp_path,
+        "scd1",
+        "gold_null_src.dim_geography",
+        "SELECT 'DE' AS country_code, 'Germany' AS name "
+        "UNION ALL SELECT CAST(NULL AS STRING), 'Nowhere'",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pipetree.adapters.spark"):
+        first = adapter.run_table(table, execution_id=1)
+        second = adapter.run_table(table, execution_id=2)
+
+    assert first is not None and first["null_keys_dropped"] == 1
+    assert second is not None and second["null_keys_dropped"] == 1
+    assert "gold_null_src.dim_geography" in caplog.text
+    unknown = spark.table(table.fqn).filter("country_code IS NULL").collect()
+    assert len(unknown) == 1
+    assert unknown[0]["name"] is None  # the seeded unknown member, not 'Nowhere'
+    assert spark.table(table.fqn).count() == 2
+
+
+def test_null_source_keys_are_kept_on_a_table_without_unknown_member(spark, tmp_path):
+    (tmp_path / "plain.sql").write_text(
+        "SELECT 'DE' AS country_code UNION ALL SELECT CAST(NULL AS STRING)"
+    )
+    table = make_table(
+        logic="plain.sql",
+        strategy="replace",
+        fqn="silver_null_plain.geo",
+        source=None,
+        business_key=["country_code"],
+    )
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    result = adapter.run_table(table, execution_id=1)
+
+    assert result is not None and "null_keys_dropped" not in result
+    assert spark.table(table.fqn).count() == 2
+
+
+def test_a_fact_resolves_a_null_unknown_member_and_matched_rows_unchanged(spark, tmp_path):
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    dim = _string_dim(
+        tmp_path,
+        "scd2",
+        "gold_null_fact.dim_geography",
+        "SELECT 'DE' AS country_code, 'Germany' AS name UNION ALL SELECT 'FR', 'France'",
+    )
+    adapter.run_table(dim, execution_id=1)
+    adapter.run_table(dim, execution_id=2)
+
+    spark.createDataFrame(
+        [(1, "DE"), (2, "FR"), (3, None)], "sale_id INT, country_code STRING"
+    ).createOrReplaceTempView("fact_sales_null")
+    current = f"(SELECT * FROM {dim.fqn} WHERE _is_current)"
+
+    # A plain LEFT JOIN + COALESCE works exactly as before for matched rows.
+    plain = spark.sql(
+        "SELECT f.sale_id, COALESCE(d.name, 'n/a') AS name FROM fact_sales_null f "
+        f"LEFT JOIN {current} d ON f.country_code = d.country_code"
+    ).collect()
+    assert sorted((r["sale_id"], r["name"]) for r in plain) == [
+        (1, "Germany"),
+        (2, "France"),
+        (3, "n/a"),
+    ]
+
+    # A null-safe join reaches the unknown member - exactly one row, no fan-out.
+    null_safe = spark.sql(
+        "SELECT f.sale_id, d.country_code, d._execution_id FROM fact_sales_null f "
+        f"LEFT JOIN {current} d ON f.country_code <=> d.country_code"
+    ).collect()
+    assert len(null_safe) == 3
+    missing = [r for r in null_safe if r["sale_id"] == 3]
+    assert len(missing) == 1 and missing[0]["_execution_id"] is not None
