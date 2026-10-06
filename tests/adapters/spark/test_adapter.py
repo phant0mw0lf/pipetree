@@ -258,3 +258,163 @@ def test_run_table_passes_init_through_to_the_merge_strategy(spark, tmp_path):
 
     ids = {r["id"] for r in spark.table(table.fqn).collect()}
     assert ids == {3}  # a full reload, not a merge against the existing rows
+
+
+# ------------------------------------------------- reserved audit columns
+#
+# A downstream table whose logic is `SELECT *` from an upstream pipetree
+# table inherits the upstream's audit columns. pipetree stamps its own, so
+# without stripping them first every strategy failed with
+# COLUMN_ALREADY_EXISTS (`_execution_id`) on the first write.
+
+_RESERVED = {
+    "_inserted_at",
+    "_updated_at",
+    "_is_deleted",
+    "_execution_id",
+    "_source_system",
+    "_valid_from",
+    "_valid_to",
+    "_is_current",
+}
+
+
+def _write_upstream(spark, tmp_path, fqn: str, strategy: str, select_sql: str) -> SparkAdapter:
+    """Write `fqn` through pipetree itself, so it carries real audit columns."""
+    (tmp_path / "upstream.sql").write_text(select_sql)
+    upstream = make_table(logic="upstream.sql", strategy=strategy, fqn=fqn, source=None)
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    adapter.run_table(upstream, execution_id=1)
+    return adapter
+
+
+@pytest.mark.parametrize("strategy", ["replace", "scd1", "scd2", "append"])
+def test_select_star_from_a_pipetree_table_strips_its_audit_columns(spark, tmp_path, strategy):
+    upstream_fqn = f"bronze_audit_{strategy}.customer"
+    adapter = _write_upstream(
+        spark, tmp_path, upstream_fqn, "scd1", "SELECT 1 AS id, 'Alice' AS name"
+    )
+    (tmp_path / "downstream.sql").write_text(f"SELECT * FROM {upstream_fqn}")
+    downstream = make_table(
+        logic="downstream.sql",
+        strategy=strategy,
+        fqn=f"silver_audit_{strategy}.customer",
+        source=None,
+    )
+
+    # Twice: the first run seeds/overwrites, the second exercises the real
+    # merge (scd1/scd2) or the append path against an existing table.
+    adapter.run_table(downstream, execution_id=2)
+    adapter.run_table(downstream, execution_id=3)
+
+    written = spark.table(downstream.fqn)
+    columns = written.columns
+    assert len(columns) == len(set(columns))
+    business = [c for c in columns if c not in _RESERVED]
+    assert business == ["id", "name"]
+    # The downstream table's stamps are its own, not the upstream's.
+    assert {r["_execution_id"] for r in written.collect()} <= {2, 3}
+    assert {r["_execution_id"] for r in written.collect()} != {1}
+
+
+def test_scd2_reserved_columns_from_an_upstream_scd2_table_are_stripped_for_scd1(spark, tmp_path):
+    upstream_fqn = "bronze_audit_scd2up.customer"
+    adapter = _write_upstream(
+        spark, tmp_path, upstream_fqn, "scd2", "SELECT 1 AS id, 'Alice' AS name"
+    )
+    assert {"_valid_from", "_valid_to", "_is_current"} <= set(spark.table(upstream_fqn).columns)
+
+    (tmp_path / "downstream.sql").write_text(f"SELECT * FROM {upstream_fqn}")
+    downstream = make_table(
+        logic="downstream.sql", strategy="scd1", fqn="silver_audit_scd2up.customer", source=None
+    )
+    adapter.run_table(downstream, execution_id=2)
+    adapter.run_table(downstream, execution_id=3)
+
+    columns = spark.table(downstream.fqn).columns
+    assert not {"_valid_from", "_valid_to", "_is_current"} & set(columns)
+    assert len(columns) == len(set(columns))
+
+
+def test_underscore_prefixed_user_columns_that_are_not_reserved_survive(spark, tmp_path):
+    upstream_fqn = "bronze_audit_underscore.customer"
+    adapter = _write_upstream(
+        spark,
+        tmp_path,
+        upstream_fqn,
+        "scd1",
+        "SELECT 1 AS id, 'Alice' AS name, 'eu' AS _region, true AS _is_deleted_src",
+    )
+    (tmp_path / "downstream.sql").write_text(f"SELECT * FROM {upstream_fqn}")
+    downstream = make_table(
+        logic="downstream.sql",
+        strategy="scd1",
+        fqn="silver_audit_underscore.customer",
+        source=None,
+    )
+    adapter.run_table(downstream, execution_id=2)
+    adapter.run_table(downstream, execution_id=3)
+
+    row = spark.table(downstream.fqn).collect()[0]
+    assert row["_region"] == "eu"
+    assert row["_is_deleted_src"] is True
+
+
+def test_a_source_without_reserved_columns_is_unchanged(spark, tmp_path):
+    (tmp_path / "plain.sql").write_text("SELECT 1 AS id, 'Alice' AS name")
+    table = make_table(logic="plain.sql", strategy="scd1", fqn="silver_audit_plain.c", source=None)
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    adapter.run_table(table, execution_id=1)
+    result = adapter.run_table(table, execution_id=2)
+
+    assert result is not None
+    assert not any("added" in c for c in result.get("schema_changes", []))
+    assert spark.table(table.fqn).columns[:2] == ["id", "name"]
+    written = spark.table(table.fqn).collect()
+    assert [(r["id"], r["name"]) for r in written] == [(1, "Alice")]
+
+
+def test_a_source_reader_returning_reserved_columns_is_stripped_too(spark, tmp_path):
+    def read_source(table, system):
+        return spark.createDataFrame(
+            [(1, "Alice", 99, "elsewhere")], ["id", "name", "_execution_id", "_source_system"]
+        )
+
+    system = System.model_validate({"type": "csv", "path": "unused.csv"})
+    table = make_table(
+        source={"system": "crm", "object": "customer"},
+        strategy="replace",
+        fqn="bronze_audit_reader.customer",
+    )
+    adapter = SparkAdapter(
+        spark, systems={"crm": system}, base_dir=tmp_path, read_source=read_source
+    )
+
+    adapter.run_table(table, execution_id=7)
+
+    row = spark.table(table.fqn).collect()[0]
+    assert row["_execution_id"] == 7
+    assert row["_source_system"] == "crm"
+
+
+def test_an_aliased_upstream_stamp_still_drives_delete_when(spark, tmp_path):
+    upstream_fqn = "bronze_audit_alias.customer"
+    adapter = _write_upstream(
+        spark, tmp_path, upstream_fqn, "scd1", "SELECT 1 AS id, 'Alice' AS name"
+    )
+    spark.sql(f"INSERT INTO {upstream_fqn} SELECT 2, 'Bob', 0L, 0L, true, 1L, CAST(NULL AS STRING)")
+    (tmp_path / "downstream.sql").write_text(
+        f"SELECT *, _is_deleted AS upstream_is_deleted FROM {upstream_fqn}"
+    )
+    downstream = make_table(
+        logic="downstream.sql",
+        strategy="scd1",
+        fqn="silver_audit_alias.customer",
+        source=None,
+        merge={"delete_when": "upstream_is_deleted = true", "delete_mode": "hard"},
+    )
+
+    adapter.run_table(downstream, execution_id=2)
+
+    assert {r["id"] for r in spark.table(downstream.fqn).collect()} == {1}

@@ -24,6 +24,7 @@ from pipetree.adapters.spark.merge import (
     merge_scd1,
     merge_scd2,
     seed_unknown_member,
+    strip_reserved_columns,
 )
 from pipetree.model import System, Table
 from pipetree.platform.base import Platform
@@ -73,6 +74,11 @@ class SparkAdapter:
         else:
             source_df = self._run_logic(table)
             source_system = None
+
+        # The one choke point every strategy's input passes through, for a
+        # source read and a logic file alike: whatever audit columns the
+        # input inherited, the merge below stamps this table's own.
+        source_df = strip_reserved_columns(source_df, table)
 
         merge_fn = _MERGE_FUNCTIONS[table.strategy]
         result = merge_fn(self._spark, table, source_df, execution_id, source_system, init)
