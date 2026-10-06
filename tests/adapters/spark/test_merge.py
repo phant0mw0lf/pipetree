@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ from pipetree.adapters.spark.merge import (
     merge_scd1,
     merge_scd2,
     seed_unknown_member,
+    strip_reserved_columns,
 )
 from pipetree.model import Table
 
@@ -479,3 +481,32 @@ def test_evolve_rejects_an_unsafe_retype(spark):
             2,
             "crm",
         )
+
+
+# ------------------------------------------------- reserved audit columns
+
+
+def test_strip_reserved_columns_drops_only_exact_reserved_names_and_logs_them(spark, caplog):
+    table = make_table("strip1", "scd1")
+    source = spark.createDataFrame(
+        [(1, "a", 5, True, "x", "__keep__")],
+        ["id", "name", "_execution_id", "_is_current", "_note", "__pipetree_is_delete__"],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="pipetree.adapters.spark"):
+        stripped = strip_reserved_columns(source, table)
+
+    assert stripped.columns == ["id", "name", "_note", "__pipetree_is_delete__"]
+    assert "test_scd1.strip1" in caplog.text
+    assert "_execution_id, _is_current" in caplog.text
+
+
+def test_strip_reserved_columns_is_a_noop_without_reserved_columns(spark, caplog):
+    table = make_table("strip2", "scd1")
+    source = spark.createDataFrame([(1, "a")], ["id", "name"])
+
+    with caplog.at_level(logging.DEBUG, logger="pipetree.adapters.spark"):
+        stripped = strip_reserved_columns(source, table)
+
+    assert stripped is source
+    assert caplog.text == ""

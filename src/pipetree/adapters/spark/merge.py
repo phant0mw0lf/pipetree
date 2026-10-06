@@ -11,6 +11,7 @@ isn't re-evaluated against the table the merge just mutated.
 
 from __future__ import annotations
 
+import logging
 import operator
 from functools import reduce
 from typing import Any
@@ -31,10 +32,13 @@ from pipetree.model import Table
 from pipetree.schema.infer import infer_schema
 from pipetree.schema.policy import SchemaReconciliation, reconcile
 
+_logger = logging.getLogger("pipetree.adapters.spark")
+
 _IS_DELETE_COL = "__pipetree_is_delete__"
 
-# Excluded when inferring a target table's schema for drift comparison -
-# these are pipetree's own stamps, never part of the source's schema.
+# pipetree's own stamps, never part of the source's schema: excluded when
+# inferring a target table's schema for drift comparison, and stripped from
+# an incoming source (see `strip_reserved_columns`).
 _AUDIT_COLUMNS = frozenset(
     {
         "_inserted_at",
@@ -47,6 +51,28 @@ _AUDIT_COLUMNS = frozenset(
         "_is_current",
     }
 )
+
+
+def strip_reserved_columns(source: DataFrame, table: Table) -> DataFrame:
+    """Drop pipetree's reserved audit columns from an incoming source.
+
+    A downstream table built from an upstream pipetree table (`SELECT *
+    FROM bronze.x`, or a DataFrame derived from `spark.table("bronze.x")`)
+    inherits the upstream's `_execution_id`, `_inserted_at`, ... - which
+    are never meaningful downstream: every strategy stamps its own, and
+    stamping on top of an inherited one fails with COLUMN_ALREADY_EXISTS.
+    Matched by exact name only, so a user's own `_`-prefixed column that
+    isn't reserved passes through untouched.
+    """
+    reserved = [c for c in source.columns if c in _AUDIT_COLUMNS]
+    if not reserved:
+        return source
+    _logger.debug(
+        "%s: dropping reserved audit column(s) inherited from the source: %s",
+        table.fqn,
+        ", ".join(reserved),
+    )
+    return source.drop(*reserved)
 
 
 def _reconcile_schema(

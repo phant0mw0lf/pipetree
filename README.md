@@ -109,6 +109,14 @@ See the blog series for the full design rationale. In short:
   only the columns already in the target. Every non-empty diff is
   recorded in the run log (`append`/`replace` don't enforce a policy -
   `replace` already means "whatever the source says, goes").
+- **Audit columns** - every table gets `_inserted_at`, `_updated_at`,
+  `_is_deleted`, `_execution_id`, `_source_system` (plus `_valid_from`,
+  `_valid_to`, `_is_current` on `scd2`). They're reserved: any of these
+  an incoming source already carries (a `SELECT *` from an upstream
+  pipetree table, say) are dropped before the merge, since pipetree stamps
+  the table's own. To use an upstream stamp downstream (e.g. in
+  `delete_when` or `sequence_by`), alias it in the logic file
+  (`_is_deleted AS upstream_is_deleted`).
 - **Platforms** (`pipetree.platform`) answer "where am I running?" for
   secrets, table naming, storage paths and run metadata - `LocalPlatform`
   (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret
