@@ -51,9 +51,10 @@ A captured transcript of that run, annotated, is in `examples/demo-run.txt`.
 `uv run pipetree validate --config <path>` checks a config without running
 anything - useful in CI before a deploy.
 
-`uv run pipetree graph --config <path> [--format text|mermaid]` prints the
-dependency tree - `--format mermaid` on the example config reproduces part
-1's own diagram.
+`uv run pipetree graph --config <path> [--format text|mermaid|html]` prints
+the dependency tree - `--format mermaid` on the example config reproduces
+part 1's own diagram; `--format html` is the picture described in
+[Seeing the run](#seeing-the-run).
 
 A run can be scoped instead of running everything: `--select
 bronze.orders,silver.orders` runs just those tables (skipping the rest);
@@ -61,6 +62,90 @@ add `--with-dependents` to extend that to the full descendant closure -
 the CI/CD mode from part 1, where a changed table's dependents get rebuilt
 too. `--init` is the run-level full-reload parameter: every selected table
 is seeded from scratch rather than merged against what's already there.
+
+## Seeing the run
+
+The package builds the tree from the edges; it can also draw it, and keep
+drawing it while a run goes. The picture is one self-contained HTML string
+(inline CSS + SVG - no scripts, fonts or CDNs, so it works inside a
+notebook's sandboxed output iframe):
+
+- **Waves, left to right.** A table's wave is the length of its longest
+  dependency chain from a root. Everything in one column *can* run in
+  parallel (bounded by `max_workers`) - that's "when what runs". The
+  executor doesn't wait for a whole wave, though: a table starts the moment
+  its own parents have succeeded. Within a wave tables are grouped by layer
+  (the coloured stripe; the fqn's prefix), and a tall wave wraps into
+  balanced sub-columns (`max_rows`, 30 by default).
+- **Status** is colour (colour-blind-safe Okabe-Ito hues) *and* a glyph:
+  `○` pending, `▶` running (pulsing), `↻` retrying, `✓` succeeded (dashed
+  orange border if it took a retry), `✗` failed, `⊘` upstream_failed, `–`
+  skipped. Hover a table for its full fqn, status, attempt, duration,
+  parents and error, and to light up its edges.
+- A header with the execution id, counts and elapsed time; at the end of a
+  run, the digest as a table under the graph (problems first).
+
+**Render it yourself** - a pure function, deterministic for the same input:
+
+```python
+from pipetree.graph.html import render_html, render_html_page
+
+# a fragment, every table pending
+html = render_html(graph)
+# states by fqn (a NodeState or a bare status); anything missing is pending
+html = render_html(graph, {"silver.orders": "running"}, execution_id=42, elapsed_s=12.5)
+# a complete document, for a file
+page = render_html_page(graph, title="nightly")
+```
+
+**Live, in a notebook cell** (Databricks, Fabric, Jupyter) - pass an
+observer to `run_pipeline`:
+
+```python
+from pipetree import run_pipeline
+from pipetree.notebook import LiveGraphView
+
+view = LiveGraphView(title="nightly")
+digest = run_pipeline("pipeline.yaml", observer=view)
+```
+
+It draws the whole tree (all pending) when the run starts, redraws as
+tables start, retry and finish - at most once a second - and always once
+more at the end, with the digest. In an IPython kernel it updates one
+output in place (`display(HTML(...), display_id=True)` then
+`handle.update(...)`); if that isn't available it falls back to
+`clear_output(wait=True)` and a fresh display (on Databricks through
+`displayHTML`), which re-renders the cell's output and clears anything else
+the cell printed. With no notebook at all it prints a `[pipetree] 42/171
+done · 3 running · ...` line when the counts change. Force one with
+`LiveGraphView(backend="ipython" | "clear" | "text")`. The in-place path is
+verified in a real Jupyter kernel; **on Databricks and Fabric it is not yet
+verified in a real workspace** (both run Python notebooks on an IPython
+kernel, and Databricks documents `update_display` as working within the
+current cell - which is where the run happens).
+
+**Live, as a file** (anywhere - a laptop, a job's driver):
+
+```bash
+uv run pipetree run --config pipeline.yaml --live-html run.html
+```
+
+or `observer=HtmlFileObserver("run.html")` from Python. The file is
+rewritten atomically (temp file + rename) on each update and carries a
+`<meta http-equiv="refresh" content="2">` while the run is going, so an
+open browser tab follows along; the final write drops it.
+
+Observers are called on the thread that called `run_pipeline`, one at a
+time (worker threads only queue events), and one that raises is logged
+once and switched off - it can never fail or stall a run. Write your own
+against `pipetree.executor.events.RunObserver` (`on_run_start`,
+`on_table_event`, `on_run_end`, optional `on_idle`).
+
+To see what a big pipeline looks like without running anything,
+`examples/graph_snapshots.py <pipeline.yaml> <out-dir>` writes the
+all-pending picture and a **simulated** mid-run one (first layer done,
+half the second, a few running, one failure with its descendants
+upstream_failed) - no Spark needed.
 
 ## Architecture
 
@@ -77,7 +162,8 @@ See the blog series for the full design rationale. In short:
   literals; `depends_on` lists are matched by fqn or, if unambiguous, by bare
   table name), sorts it topologically, and reports a cycle's full path if it
   finds one. `select.py` resolves `--select`/`--with-dependents` to a set of
-  fqns to run; `render.py` draws the tree as text or Mermaid.
+  fqns to run; `render.py` draws the tree as text or Mermaid, `html.py`
+  as a self-contained HTML picture laid out in waves (`waves.py`).
 - **Executor** (`pipetree.executor`) — walks the dependency tree (not the
   layers) with a thread pool and a ready queue: a table starts the instant
   its parents have succeeded. Retries transient errors only (throttling,
@@ -161,6 +247,11 @@ See the blog series for the full design rationale. In short:
   `_meta.pipeline_run_log` (a `replaceWhere` on `_execution_id`, so
   re-running the same execution id overwrites rather than duplicates); a
   pluggable `Notifier` reports the digest (`ConsoleNotifier` by default).
+- **Progress** (`pipetree.executor.events`, `pipetree.notebook`) - an
+  optional `RunObserver` sees the run while it happens (per-table
+  running/retrying/finished events); `LiveGraphView` and
+  `HtmlFileObserver` turn that into the live picture. See
+  [Seeing the run](#seeing-the-run).
 - **Declarative pipelines** (`pipetree.declarative.autocdc`) — a pure
   translation of an `scd1`/`scd2` table into Databricks' AUTO CDC flow
   syntax (`KEYS`, `SEQUENCE BY`, `APPLY AS DELETE WHEN`,

@@ -51,6 +51,15 @@ add adapters and features behind seams the core already defines.
       `dlt.apply_changes`) isn't verified; the rendered SQL is checked
       against part 1's own worked example instead, the more stable target.
 
+- [x] **Seeing the run** (after the plan, for the rebuild): the tree
+      rendered as self-contained HTML in waves (`pipetree.graph.html`,
+      `pipetree graph --format html`), progress events from the executor
+      (`RunObserver`), a live view for notebook cells (`LiveGraphView`) and
+      an auto-refreshing HTML file (`HtmlFileObserver`, `pipetree run
+      --live-html`). The in-place notebook update is verified in a real
+      Jupyter kernel; Databricks and Fabric notebooks are **not yet
+      verified** - part of the same verification round as Phase C.
+
 This closes the build order from the original plan. What's still open:
 the **Databricks/Fabric verification round** from Phase C (deploy
 `examples/databricks/` and `examples/fabric/` for real, report back what
