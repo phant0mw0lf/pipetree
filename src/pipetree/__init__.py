@@ -23,6 +23,7 @@ from pipetree.runlog.writer import InMemoryRunLogWriter
 
 if TYPE_CHECKING:
     from pipetree.adapters.base import Adapter
+    from pipetree.executor.events import ObserverArg
     from pipetree.runlog.notifier import Notifier
     from pipetree.runlog.writer import RunLogWriter
 
@@ -45,6 +46,7 @@ def run_pipeline(
     select: list[str] | None = None,
     with_dependents: bool = False,
     init: bool = False,
+    observer: ObserverArg = None,
 ) -> RunDigest:
     """Load `config_path`, build the dependency graph, and run it.
 
@@ -57,6 +59,12 @@ def run_pipeline(
     `with_dependents` extends that to the full descendant closure - the
     CI/CD mode from part 1, where a changed table's dependents get rebuilt
     too. `init` is the run-level "full reload" parameter.
+
+    `observer` (a `RunObserver`, or a list of them) watches the run while it
+    happens - e.g. `pipetree.notebook.LiveGraphView` in a notebook cell, or
+    `pipetree.notebook.HtmlFileObserver` writing an auto-refreshing HTML
+    file. Its callbacks arrive on the calling thread; one that raises is
+    disabled, never fatal.
     """
     config_path = Path(config_path)
     raw = load_config(config_path)
@@ -82,6 +90,7 @@ def run_pipeline(
         retry_policy=retry_policy or RetryPolicy(),
         selected=selected,
         init=init,
+        observer=observer,
     )
 
     writer = run_log_writer or InMemoryRunLogWriter()
