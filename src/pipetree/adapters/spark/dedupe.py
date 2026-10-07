@@ -1,15 +1,21 @@
 """Pre-merge deduplication: a source batch with several rows per
 `business_key` is deduped before an scd1/scd2 merge (Delta's MERGE errors
-on multi-matches otherwise). This is info, not failure - the caller logs
-`duplicates_dropped` and keeps going; without `sequence_by` the winner is
-deterministic but arbitrary, which the caller logs as a warning."""
+on multi-matches otherwise). This is not a failure: duplicates are dropped
+and logged here as a warning (the count also lands in the run's details as
+`duplicates_dropped`), and the run keeps going. Without `sequence_by` the
+winner is deterministic for a given input but arbitrary, which the warning
+says."""
 
 from __future__ import annotations
+
+import logging
 
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from pipetree.model import Table
+
+_logger = logging.getLogger("pipetree.adapters.spark")
 
 
 def dedupe_for_merge(df: DataFrame, table: Table) -> tuple[DataFrame, int]:
@@ -35,4 +41,16 @@ def dedupe_for_merge(df: DataFrame, table: Table) -> tuple[DataFrame, int]:
     )
 
     duplicates_dropped = total_before - deduped.count()
+    if duplicates_dropped:
+        if table.merge.sequence_by:
+            winner = f" - kept the highest ({', '.join(table.merge.sequence_by)})"
+        else:
+            winner = "; no sequence_by is declared, so which duplicate won is arbitrary"
+        _logger.warning(
+            "%s: dropped %d duplicate row(s) for key (%s)%s",
+            table.fqn,
+            duplicates_dropped,
+            ", ".join(table.business_key),
+            winner,
+        )
     return deduped, duplicates_dropped

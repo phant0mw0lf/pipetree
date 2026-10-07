@@ -82,6 +82,7 @@ class TableEvent:
     duration_ms: int | None = None
     error_type: str | None = None
     error_message: str | None = None  # summarised: see ERROR_SUMMARY_MAX_CHARS
+    notes: tuple[str, ...] = ()  # data-quality notes, known once a table has finished
 
     @classmethod
     def from_result(cls, result: TableResult) -> TableEvent:
@@ -94,6 +95,7 @@ class TableEvent:
             duration_ms=result.duration_ms,
             error_type=result.error_type,
             error_message=summarize_error(result.error_message),
+            notes=tuple(result.notes),
         )
 
 
