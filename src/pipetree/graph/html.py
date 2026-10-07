@@ -41,6 +41,7 @@ class NodeState:
     duration_ms: int | None = None
     error_type: str | None = None
     error_message: str | None = None
+    notes: tuple[str, ...] = ()  # data-quality notes; a badge, never a status colour
 
     @classmethod
     def from_event(cls, event: TableEvent) -> NodeState:
@@ -50,6 +51,7 @@ class NodeState:
             duration_ms=event.duration_ms,
             error_type=event.error_type,
             error_message=event.error_message,
+            notes=event.notes,
         )
 
     @classmethod
@@ -74,6 +76,8 @@ _WAVE_GAP = 56
 _PAD = 14
 _HEAD_H = 40
 _LABEL_CHARS = 24  # what fits in a cell at 11px monospace beside the glyph
+_LABEL_CHARS_NOTED = 22  # the notes badge takes the cell's right edge
+_NOTE_GLYPH = "⚠"
 
 # --- status vocabulary ----------------------------------------------------
 
@@ -154,7 +158,7 @@ def render_html(
         "</style>",
     ]
     parts.append(_header(graph, resolved, execution_id, title, elapsed_s, digest))
-    parts.append(_legend(graph, layers, layer_color))
+    parts.append(_legend(graph, layers, layer_color, any(s.notes for s in resolved.values())))
     parts.append(
         '<div class="ptg-caption">Columns are <b>waves</b>: a table sits in wave <i>k</i> when '
         "its longest chain of dependencies is <i>k</i> tables long, so a column's tables can run "
@@ -241,6 +245,12 @@ def _header(
                 f'<span class="ptg-chip ptg-s-{statuses[0].value}">'
                 f'<span class="ptg-glyph">{glyph}</span> {n} {label}</span>'
             )
+    noted = sum(bool(state.notes) for state in states.values())
+    if noted:
+        chips.append(
+            f'<span class="ptg-chip ptg-chip-notes"><span class="ptg-glyph">{_NOTE_GLYPH}</span>'
+            f" {noted} with notes</span>"
+        )
     return (
         '<div class="ptg-head">'
         f'<div class="ptg-title">{escape(title or "pipetree")}</div>'
@@ -250,7 +260,9 @@ def _header(
     )
 
 
-def _legend(graph: Graph, layers: list[str], layer_color: dict[str, str]) -> str:
+def _legend(
+    graph: Graph, layers: list[str], layer_color: dict[str, str], any_notes: bool = False
+) -> str:
     status_items = "".join(
         f'<span class="ptg-key"><span class="ptg-swatch ptg-s-{status.value}">{glyph}</span>'
         f"{escape(label)}</span>"
@@ -262,10 +274,17 @@ def _legend(graph: Graph, layers: list[str], layer_color: dict[str, str]) -> str
         f'</span>{escape(layer)} <span class="ptg-dim">{per_layer[layer]}</span></span>'
         for layer in layers
     )
+    notes_item = (
+        f'<div><span class="ptg-key ptg-key-notes"><span class="ptg-badge-key">{_NOTE_GLYPH}</span>'
+        "merge changed data - hover for notes</span></div>"
+        if any_notes
+        else ""
+    )
     return (
         '<div class="ptg-legend">'
         f'<div><span class="ptg-legend-title">status</span>{status_items}</div>'
         f'<div><span class="ptg-legend-title">layer</span>{layer_items}</div>'
+        f"{notes_item}"
         "</div>"
     )
 
@@ -355,8 +374,9 @@ def _node(
     layer = layer_of(fqn)
     glyph, label = _STATUS[state.status]
     short = fqn.split(".", 1)[1] if "." in fqn else fqn
-    if len(short) > _LABEL_CHARS:
-        short = short[: _LABEL_CHARS - 1] + "…"
+    label_chars = _LABEL_CHARS_NOTED if state.notes else _LABEL_CHARS
+    if len(short) > label_chars:
+        short = short[: label_chars - 1] + "…"
 
     tip = [fqn, f"status: {label}" + (f" (attempt {state.attempt})" if state.attempt else "")]
     if state.duration_ms is not None:
@@ -366,17 +386,27 @@ def _node(
     tip.append("depends on: " + (", ".join(parents) if parents else "nothing (a root)"))
     if state.error_type or state.error_message:
         tip.append(f"error: {state.error_type or 'Error'}: {state.error_message or ''}")
+    if state.notes:
+        tip.append("notes:")
+        tip.extend(f"  {note}" for note in state.notes)
+    noted_attr = f' data-notes="{len(state.notes)}"' if state.notes else ""
+    badge = (
+        f'<text class="ptg-badge" x="{_CELL_W - 15}" y="14">{_NOTE_GLYPH}</text>'
+        if state.notes
+        else ""
+    )
 
     return (
         f'<g class="ptg-node n{index[fqn]} ptg-s-{state.status.value}" '
         f'data-fqn="{escape(fqn)}" data-status="{state.status.value}" data-wave="{wave}" '
-        f'data-layer="{escape(layer)}" transform="translate({x:.1f},{y:.1f})">'
+        f'data-layer="{escape(layer)}"{noted_attr} transform="translate({x:.1f},{y:.1f})">'
         f"<title>{escape(chr(10).join(tip))}</title>"
         f'<rect class="ptg-cell" width="{_CELL_W}" height="{_CELL_H}" rx="4"/>'
         f'<rect class="ptg-layer" x="2" y="3" width="3" height="{_CELL_H - 6}" rx="1.5" '
         f'fill="{layer_color[layer]}"/>'
         f'<text class="ptg-glyph-t" x="10" y="14">{glyph}</text>'
         f'<text class="ptg-label" x="24" y="14">{escape(short)}</text>'
+        f"{badge}"
         "</g>"
     )
 
@@ -399,6 +429,7 @@ def _digest_table(digest: RunDigest) -> str:
     )
     problems = sum(r.status in (TableStatus.FAILED, TableStatus.UPSTREAM_FAILED) for r in rows)
     outcome = "SUCCEEDED" if digest.succeeded else "FAILED"
+    any_notes = any(r.notes for r in rows)
     body = []
     for r in rows:
         status = progress_status(r.status)
@@ -409,15 +440,21 @@ def _digest_table(digest: RunDigest) -> str:
             f"{escape(r.status.value)}</td><td>{escape(r.table_fqn)}</td>"
             f'<td class="ptg-num">{r.attempts}</td>'
             f'<td class="ptg-num">{escape(_fmt_seconds(r.duration_ms / 1000))}</td>'
-            f'<td class="ptg-err">{escape(error)}</td></tr>'
+            f'<td class="ptg-err">{escape(error)}</td>'
+            f"{_notes_cell(r) if any_notes else ''}</tr>"
         )
     return (
         f'<details class="ptg-digest"{" open" if problems else ""}>'
         f"<summary>Run digest - {outcome} (exit code {digest.exit_code}), "
         f"{len(rows)} tables, {problems} failed or upstream_failed</summary>"
         "<table><thead><tr><th>status</th><th>table</th><th>attempts</th><th>duration</th>"
-        f"<th>error</th></tr></thead><tbody>{''.join(body)}</tbody></table></details>"
+        f"<th>error</th>{'<th>notes</th>' if any_notes else ''}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></details>"
     )
+
+
+def _notes_cell(result: TableResult) -> str:
+    return f'<td class="ptg-notes">{escape("; ".join(result.notes))}</td>'
 
 
 def _fmt_seconds(seconds: float) -> str:
@@ -452,6 +489,7 @@ _LIGHT_VARS = (
     "--retrying-f:#fdecc8;--retrying-s:#b97800;--succeeded-f:#d4f0e5;--succeeded-s:#00876a;"
     "--retried-f:#d4f0e5;--retried-s:#b97800;--failed-f:#fbd5c4;--failed-s:#c24100;"
     "--upstream-f:#f5e0ec;--upstream-s:#a8558a;--skipped-f:#ffffff;--skipped-s:#c3c9cf;"
+    "--note:#9a5b00;--note-bd:#d98e04;"
 )
 _DARK_VARS = (
     "--bg:#1b1f24;--fg:#e6e8eb;--muted:#9aa3ad;--line:#3a4048;--edge:#9aa3ad;--edge-hi:#5cb6ff;"
@@ -459,6 +497,7 @@ _DARK_VARS = (
     "--retrying-f:#4a3608;--retrying-s:#e69f00;--succeeded-f:#0f3d31;--succeeded-s:#2fbf95;"
     "--retried-f:#0f3d31;--retried-s:#e69f00;--failed-f:#55210a;--failed-s:#ff7a33;"
     "--upstream-f:#42213a;--upstream-s:#d98cbc;--skipped-f:#1b1f24;--skipped-s:#4b525b;"
+    "--note:#ffc24d;--note-bd:#e69f00;"
 )
 
 _CSS = (
@@ -534,6 +573,12 @@ _CSS = (
     ".ptg-s-skipped .ptg-cell{stroke-dasharray:3 3}.ptg-s-skipped .ptg-label{fill:var(--muted)}"
     "@keyframes ptg-pulse{0%,100%{stroke-opacity:1}50%{stroke-opacity:.3}}"
     "@media (prefers-reduced-motion: reduce){.ptg-cell{animation:none!important}}"
+    # The badge is amber text, separate from the status fill: a succeeded
+    # table with notes stays green.
+    ".ptg-badge{font-size:12px;font-weight:700;fill:var(--note)}"
+    ".ptg-chip-notes{border-color:var(--note-bd);color:var(--note)}"
+    ".ptg-badge-key{color:var(--note);font-weight:700}"
+    ".ptg-notes{color:var(--note)!important}"
     ".ptg-digest{margin-top:10px}.ptg-digest summary{cursor:pointer;font-weight:600}"
     ".ptg-digest table{border-collapse:collapse;margin-top:6px;font-size:12px;width:100%}"
     ".ptg-digest th,.ptg-digest td{border-bottom:1px solid var(--line);padding:2px 8px;"

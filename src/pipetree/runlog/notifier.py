@@ -30,6 +30,8 @@ def format_digest(digest: RunDigest) -> str:
         )
         if result.status == TableStatus.FAILED:
             line += f"  {result.error_type}: {result.error_message}"
+        if notes := result.notes:
+            line += f"  notes: {'; '.join(notes)}"
         lines.append(line)
 
     return "\n".join(lines)

@@ -77,3 +77,26 @@ def test_console_notifier_writes_the_formatted_digest_to_its_stream():
     notifier.notify(digest)
 
     assert format_digest(digest) in stream.getvalue()
+
+
+def test_format_digest_appends_notes_to_the_table_line():
+    digest = RunDigest(
+        execution_id=1,
+        results={
+            "bronze.a": TableResult(
+                "bronze.a",
+                TableStatus.SUCCEEDED,
+                1,
+                1,
+                2,
+                5,
+                details={"duplicates_dropped": 2, "schema_changes": ["added: x"]},
+            ),
+            "bronze.b": TableResult("bronze.b", TableStatus.SUCCEEDED, 1, 1, 2, 5),
+        },
+    )
+
+    lines = {line.split()[1]: line for line in format_digest(digest).splitlines()[1:]}
+
+    assert lines["bronze.a"].endswith("  notes: 2 duplicate row(s) dropped; schema: added: x")
+    assert "notes" not in lines["bronze.b"]

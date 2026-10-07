@@ -90,6 +90,25 @@ notebook's sandboxed output iframe):
 - A header with the execution id, counts and elapsed time; at the end of a
   run, the digest as a table under the graph (problems first).
 
+**Notes: what a merge quietly changed.** A merge that drops duplicate
+rows, drops NULL-key rows (`unknown_member` tables) or adapts to schema
+drift still succeeds, so each of those becomes a *note* on the table:
+
+- a `WARNING` log line when duplicates are dropped (the NULL-key drop has
+  always logged one), naming the table, the count, the key and the
+  `sequence_by` that decided the winner - or saying the winner is arbitrary
+  when none is declared;
+- the console digest appends `notes: ...` to the table's line;
+- in the graph, a table with notes gets an amber `⚠` badge (its status
+  colour is unchanged), the hover text lists the notes, the header counts
+  `⚠ n with notes`, and the end-of-run digest table gets a `notes` column
+  (only when some table has notes). The live view shows them as soon as the
+  table finishes;
+- the run log keeps the numbers in `duplicates_dropped`,
+  `null_keys_dropped` and `schema_changes`. A `_meta.pipeline_run_log`
+  created before `null_keys_dropped` existed gains the column on the next
+  write.
+
 **Render it yourself** - a pure function, deterministic for the same input:
 
 ```python
