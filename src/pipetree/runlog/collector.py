@@ -34,8 +34,8 @@ def _row_for(fqn: str, digest: RunDigest, graph: Graph) -> dict[str, Any]:
         "duration_ms": result.duration_ms,
         "rows_written": details.get("rows_written"),
         "duplicates_dropped": details.get("duplicates_dropped"),
-        "null_keys_dropped": details.get("null_keys_dropped"),
         "schema_changes": details.get("schema_changes"),
         "error_type": result.error_type,
         "error_message": result.error_message,
+        "null_keys_dropped": details.get("null_keys_dropped"),
     }

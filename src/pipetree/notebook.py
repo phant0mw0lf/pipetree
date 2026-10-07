@@ -323,6 +323,9 @@ class _ThrottledGraphObserver:
             n = sum(counts[s] for s in statuses)
             if n:
                 parts.append(f"{n} {label}")
+        noted = sum(bool(self.states.get(fqn, NodeState()).notes) for fqn in self.graph.tables)
+        if noted:
+            parts.append(f"⚠ {noted} with notes")
         line = " · ".join(parts)
         if self.digest is not None:
             outcome = "SUCCEEDED" if self.digest.succeeded else "FAILED"

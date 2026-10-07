@@ -27,10 +27,12 @@ _SCHEMA = StructType(
         StructField("duration_ms", LongType(), nullable=True),
         StructField("rows_written", LongType(), nullable=True),
         StructField("duplicates_dropped", LongType(), nullable=True),
-        StructField("null_keys_dropped", LongType(), nullable=True),
         StructField("schema_changes", ArrayType(StringType()), nullable=True),
         StructField("error_type", StringType(), nullable=True),
         StructField("error_message", StringType(), nullable=True),
+        # Last on purpose: mergeSchema appends a new column at the end of an
+        # existing table, so a fresh and an evolved run log share column order.
+        StructField("null_keys_dropped", LongType(), nullable=True),
     ]
 )
 

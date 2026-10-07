@@ -67,10 +67,10 @@ def test_writes_rows_whose_optional_columns_are_all_none(spark):
             "duration_ms": 100,
             "rows_written": None,
             "duplicates_dropped": None,
-            "null_keys_dropped": None,
             "schema_changes": None,
             "error_type": None,
             "error_message": None,
+            "null_keys_dropped": None,
         }
     ]
 
@@ -84,27 +84,30 @@ def test_writes_rows_whose_optional_columns_are_all_none(spark):
 def test_a_run_log_table_without_null_keys_dropped_is_evolved_in_place(spark):
     # Run logs created before the column existed must keep working: the
     # write adds the column, old rows read back NULL.
-    fqn = "rl_evolve.log"
+    fresh_fqn, fqn = "rl_fresh.log", "rl_evolve.log"
     spark.sql("CREATE SCHEMA IF NOT EXISTS rl_evolve")
     spark.sql(
         f"CREATE TABLE {fqn} (_execution_id BIGINT NOT NULL, table_fqn STRING NOT NULL, "
-        "status STRING, duplicates_dropped BIGINT) USING delta"
+        "layer STRING, strategy STRING, status STRING, attempts BIGINT, started_at BIGINT, "
+        "ended_at BIGINT, duration_ms BIGINT, rows_written BIGINT, duplicates_dropped BIGINT, "
+        "schema_changes ARRAY<STRING>, error_type STRING, error_message STRING) USING delta"
     )
-    spark.sql(f"INSERT INTO {fqn} VALUES (1, 'bronze.old', 'succeeded', 2)")
+    spark.sql(
+        f"INSERT INTO {fqn} (_execution_id, table_fqn, status, duplicates_dropped) "
+        "VALUES (1, 'bronze.old', 'succeeded', 2)"
+    )
+    new_row = {
+        "_execution_id": 2,
+        "table_fqn": "bronze.new",
+        "status": "succeeded",
+        "null_keys_dropped": 7,
+    }
 
-    DeltaRunLogWriter(spark, table_fqn=fqn).write(
-        [
-            {
-                "_execution_id": 2,
-                "table_fqn": "bronze.new",
-                "status": "succeeded",
-                "null_keys_dropped": 7,
-            }
-        ],
-        execution_id=2,
-    )
+    DeltaRunLogWriter(spark, table_fqn=fqn).write([new_row], execution_id=2)
+    DeltaRunLogWriter(spark, table_fqn=fresh_fqn).write([new_row], execution_id=2)
 
     by_fqn = {r["table_fqn"]: r for r in spark.table(fqn).collect()}
     assert by_fqn["bronze.old"]["null_keys_dropped"] is None
     assert by_fqn["bronze.old"]["duplicates_dropped"] == 2
     assert by_fqn["bronze.new"]["null_keys_dropped"] == 7
+    assert spark.table(fqn).columns == spark.table(fresh_fqn).columns

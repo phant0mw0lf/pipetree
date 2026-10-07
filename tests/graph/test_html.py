@@ -354,11 +354,18 @@ def test_the_tooltip_lists_the_notes_one_per_line():
 
 
 def test_header_pill_and_legend_entry_appear_only_with_notes():
-    with_notes = render_html(small_graph(), noted_states())
+    states = noted_states()
+    states["bronze.orders"] = NodeState(
+        ProgressStatus.SUCCEEDED, notes=("1 NULL-key row(s) dropped",)
+    )
+    with_notes = render_html(small_graph(), states)
     without = render_html(small_graph(), midrun_states())
 
-    assert 'ptg-chip-notes"><span class="ptg-glyph">⚠</span> 1 with notes</span>' in with_notes
-    assert "ptg-key-notes" in with_notes
+    assert 'ptg-chip-notes"><span class="ptg-glyph">⚠</span> 2 with notes</span>' in with_notes
+    assert (
+        '<span class="ptg-badge-key">⚠</span>merge changed data - hover for notes</span>'
+        in with_notes
+    )
     assert "with notes" not in without
     assert "ptg-key-notes" not in without
     assert "ptg-badge" not in without.split("</style>")[1]
@@ -391,12 +398,29 @@ def test_digest_table_gets_a_notes_column_only_when_a_table_has_notes():
     assert "<th>notes</th>" not in without
 
 
-def test_notes_are_html_escaped():
-    states = {"bronze.customer": NodeState(ProgressStatus.SUCCEEDED, notes=(EVIL,))}
+def test_notes_are_html_escaped_in_the_tooltip_and_the_digest_cell():
+    evil = '<script>alert(1)</script>" onerror="x'
+    result = TableResult(
+        "bronze.customer",
+        TableStatus.SUCCEEDED,
+        1,
+        1,
+        2,
+        5,
+        details={"schema_changes": [evil]},
+    )
+    digest = RunDigest(execution_id=1, results={"bronze.customer": result})
 
-    html = render_html(small_graph(), states)
+    html = render_html(small_graph(), states_from_digest(digest), digest=digest)
 
-    assert "<script>" not in html
+    tooltip = next(t for t in parse(html).titles if t.startswith("bronze.customer"))
+    assert f"schema: {evil}" in tooltip  # the parser unescapes: text, not markup
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html.split("<title>")[1]
+    cell = html.split('<td class="ptg-notes">')[1].split("</td>")[0]
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in cell
+    assert "<script" not in html
+    # no element carries an injected attribute
+    assert not any("onerror" in attrs for _tag, attrs in parse(html).tags)
 
 
 def test_snapshot_with_notes():

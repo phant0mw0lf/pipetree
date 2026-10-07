@@ -35,10 +35,10 @@ def test_build_run_log_rows_includes_core_fields_from_graph_and_result():
             "duration_ms": 543,
             "rows_written": None,
             "duplicates_dropped": None,
-            "null_keys_dropped": None,
             "schema_changes": None,
             "error_type": None,
             "error_message": None,
+            "null_keys_dropped": None,
         }
     ]
 
