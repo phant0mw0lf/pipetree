@@ -2,7 +2,10 @@
 
 import copy
 
+import pytest
+
 from pipetree.testing.merge_model import (
+    AmbiguousDedupe,
     ModelTable,
     apply_batch,
     is_unknown_member,
@@ -90,11 +93,121 @@ def test_scd1_dedupe_picks_highest_sequence_and_counts():
     assert stats.duplicates_dropped == 2
 
 
-def test_dedupe_without_sequence_by_only_identical_rows_in_generator_but_model_takes_first():
+def test_dedupe_without_sequence_by_takes_the_first_of_identical_rows():
     t = T("scd1")
-    state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 1, "v": "b"}, {"id": 2, "v": "c"}))
+    state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 1, "v": "a"}, {"id": 2, "v": "c"}))
     assert state == [R(1, "a", e=1), R(2, "c", e=1)]
     assert stats.duplicates_dropped == 1
+
+
+def test_ambiguous_ties_raise():
+    t = T("scd1", sequence_by=("seq",))
+    # identical tied rows are fine
+    state, stats = run(t, B({"id": 1, "v": "a", "seq": 1}, {"id": 1, "v": "a", "seq": 1}))
+    assert state == [R(1, "a", seq=1, e=1)]
+    assert stats.duplicates_dropped == 1
+    # tied rows differing in a non-key column raise
+    with pytest.raises(AmbiguousDedupe):
+        run(t, B({"id": 1, "v": "a", "seq": 1}, {"id": 1, "v": "b", "seq": 1}))
+    # a lower, differing row is not part of the tie
+    state, _ = run(
+        t,
+        B(
+            {"id": 1, "v": "a", "seq": 2},
+            {"id": 1, "v": "a", "seq": 2},
+            {"id": 1, "v": "b", "seq": 1},
+        ),
+    )
+    assert state == [R(1, "a", seq=2, e=1)]
+    # different sequence values never raise
+    run(t, B({"id": 1, "v": "a", "seq": 1}, {"id": 1, "v": "b", "seq": 2}))
+    # without sequence_by, differing duplicates raise
+    with pytest.raises(AmbiguousDedupe):
+        run(T("scd2"), B({"id": 1, "v": "a"}, {"id": 1, "v": "b"}))
+
+
+def test_multi_column_sequence_by():
+    t = T("scd1", sequence_by=("seq", "w"))
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "seq": 1, "w": "a"}, {"id": 1, "v": "b", "seq": 1, "w": "b"})
+    )
+    assert state == [R(1, "b", w="b", seq=1, e=1)]
+    # a None in the second column loses against a value
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "seq": 1, "w": None}, {"id": 1, "v": "b", "seq": 1, "w": "a"})
+    )
+    assert state == [R(1, "b", w="a", seq=1, e=1)]
+    # the first column dominates
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "seq": 2, "w": "a"}, {"id": 1, "v": "b", "seq": 1, "w": "z"})
+    )
+    assert state == [R(1, "a", w="a", seq=2, e=1)]
+
+
+def test_table_validation():
+    with pytest.raises(ValueError):
+        T("scd2", has_delete=True, delete_mode="hard")
+    with pytest.raises(ValueError):
+        T("scd1", delete_mode="drop")
+    with pytest.raises(ValueError):
+        T("merge")
+    with pytest.raises(ValueError):
+        T("scd1", ignore=("nope",))
+    with pytest.raises(ValueError):
+        T("scd1", sequence_by=("nope",))
+    with pytest.raises(ValueError):
+        T("scd1", key=("nope",))
+    with pytest.raises(ValueError):
+        T("scd1", ignore=("id",))
+
+
+def test_source_row_with_the_sentinel_key_raises_only_for_unknown_member_tables():
+    t = T("scd1", unknown_member=True, sentinels={"id": -1})
+    with pytest.raises(ValueError, match="sentinel"):
+        run(t, B({"id": -1, "v": "a"}))
+    with pytest.raises(ValueError, match="sentinel"):
+        run(t, B({"id": 1, "v": "a"}), B(D(-1)))
+    plain = T("scd1")
+    state, _ = run(plain, B({"id": -1, "v": "a"}))
+    assert state == [R(-1, "a", e=1)]
+
+
+def test_soft_delete_applied_twice_is_idempotent():
+    # a delete for an absent key is a no-op + idempotence: a re-delete does not bump _execution_id
+    for strategy in ("scd1", "scd2"):
+        t = T(strategy, has_delete=True)
+        once, _ = run(t, B({"id": 1, "v": "a"}), B(D(1)))
+        twice, _ = apply_batch(t, once, B(D(1)), 3)
+        assert twice == once
+        assert twice[0]["_execution_id"] == 2
+
+
+def test_delete_and_normal_row_in_one_batch_resolve_by_sequence():
+    for mode in ("soft", "hard"):
+        t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode=mode)
+        first = B({"id": 1, "v": "a"})
+        delete_wins = B(D(1, seq=5), {"id": 1, "v": "b", "seq": 1})
+        state, _ = apply_batch(t, apply_batch(t, [], first, 1)[0], delete_wins, 2)
+        assert state == ([R(1, "a", e=2, d=True)] if mode == "soft" else [])
+        normal_wins = B(D(1, seq=1), {"id": 1, "v": "b", "seq": 5})
+        state, _ = apply_batch(t, apply_batch(t, [], first, 1)[0], normal_wins, 2)
+        assert state == [R(1, "b", seq=5, e=2)]
+
+
+def test_unknown_member_is_one_row_after_every_batch_and_reseeded_by_init():
+    for strategy in ("replace", "append", "scd1", "scd2"):
+        t = T(strategy, unknown_member=True, sentinels={"id": -1})
+        state, ids = [], []
+        for n in (1, 2, 3):
+            state, _ = apply_batch(t, state, B({"id": n, "v": "a"}), n)
+            members = [r for r in state if is_unknown_member(t, r)]
+            assert len(members) == 1, (strategy, n)
+            ids.append(members[0]["_execution_id"])
+        assert ids == ([1, 2, 3] if strategy == "replace" else [1, 1, 1]), strategy
+        state, _ = apply_batch(t, state, B({"id": 9, "v": "z"}), 4, init=True)
+        members = [r for r in state if is_unknown_member(t, r)]
+        assert [m["_execution_id"] for m in members] == [4], strategy
+        assert len(state) == 2, strategy
 
 
 def D(id, **kw):
@@ -115,12 +228,11 @@ def test_scd1_hard_delete_removes_row():
 
 def test_delete_for_absent_key_is_a_noop():
     # a delete for an absent key is a no-op
-    for strategy in ("scd1", "scd2"):
-        for mode in ("soft", "hard"):
-            t = T(strategy, has_delete=True, delete_mode=mode)
-            cur = True if strategy == "scd2" else None
-            state, _ = run(t, B({"id": 1, "v": "a"}), B(D(7)))
-            assert state == [R(1, "a", e=1, cur=cur)], (strategy, mode)
+    for strategy, mode in (("scd1", "soft"), ("scd1", "hard"), ("scd2", "soft")):
+        t = T(strategy, has_delete=True, delete_mode=mode)
+        cur = True if strategy == "scd2" else None
+        state, _ = run(t, B({"id": 1, "v": "a"}), B(D(7)))
+        assert state == [R(1, "a", e=1, cur=cur)], (strategy, mode)
 
 
 def test_scd1_soft_deleted_key_returns_active_again_even_with_identical_values():

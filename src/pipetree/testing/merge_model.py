@@ -3,7 +3,19 @@
 Written from the merge rules, independent of the Spark implementation. It must
 not import pyspark. State rows are dicts of the table columns plus the audit
 columns ``_is_deleted``, ``_execution_id`` and (scd2 only) ``_is_current``.
-Rows keep insertion order; scd2 versions of a key are oldest first.
+Rows keep insertion order; scd2 versions of a key are oldest first. List order
+carries no meaning except scd2 version order within a key, so a harness must
+compare in a canonical order. NaN is not supported (Python ``!=`` differs from
+Spark null-safe equality).
+
+Order of operations in ``apply_batch``: (1) the NULL-key drop (a NULL-key delete
+row is counted in ``null_keys_dropped``), (2) the ``delete_mode: ignore`` filter
+removing delete rows, (3) dedupe. ``duplicates_dropped`` counts after (1) and (2).
+
+Generator contract: a source row must never carry the sentinel key of an
+``unknown_member`` table (``apply_batch`` raises ``ValueError``), and rows that tie
+for the top ``sequence_by`` value of a key must be identical (``AmbiguousDedupe``),
+because Spark would pick an arbitrary winner.
 """
 
 from __future__ import annotations
@@ -12,7 +24,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-UNKNOWN = "__unknown_member__"
+
+class AmbiguousDedupe(ValueError):
+    """Tied top rows of one key differ, so the Spark winner would be arbitrary."""
 
 
 @dataclass(frozen=True)
@@ -26,6 +40,21 @@ class ModelTable:
     has_delete: bool = False
     unknown_member: bool = False
     sentinels: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.strategy not in ("replace", "append", "scd1", "scd2"):
+            raise ValueError(f"unknown strategy {self.strategy!r}")
+        if self.delete_mode not in ("soft", "hard", "ignore"):
+            raise ValueError(f"unknown delete_mode {self.delete_mode!r}")
+        if self.strategy == "scd2" and self.delete_mode == "hard":
+            raise ValueError("scd2 does not support delete_mode 'hard'")
+        cols = set(self.columns)
+        for name in ("key", "sequence_by", "ignore"):
+            missing = set(getattr(self, name)) - cols
+            if missing:
+                raise ValueError(f"{name} columns not in columns: {sorted(missing)}")
+        if set(self.key) & set(self.ignore):
+            raise ValueError("key columns must not be ignored")
 
 
 @dataclass
@@ -83,6 +112,11 @@ def apply_batch(
     null_dropped = len(rows) - len(kept)
     rows = kept
 
+    if table.unknown_member:
+        sentinel = tuple(table.sentinels[c] for c in keys)
+        if any(_key(table, r) == sentinel for r in rows):
+            raise ValueError("source row uses the unknown-member sentinel key")
+
     scd = table.strategy in ("scd1", "scd2")
     dups: int | None = None
     if scd:
@@ -90,11 +124,19 @@ def apply_batch(
             # delete_mode ignore: delete rows are removed BEFORE dedupe
             rows = [r for r in rows if r["op"] != "D"]
         # Dedupe: winner per key = greatest sequence_by tuple, else the first row.
-        winners: dict[tuple, dict] = {}
+        groups: dict[tuple, list[dict]] = {}
         for r in rows:
-            k = _key(table, r)
-            if k not in winners or table.sequence_by and _seq(table, r) > _seq(table, winners[k]):
-                winners[k] = r
+            groups.setdefault(_key(table, r), []).append(r)
+        winners: dict[tuple, dict] = {}
+        for k, grp in groups.items():
+            if table.sequence_by:
+                top = max(_seq(table, r) for r in grp)
+                tied = [r for r in grp if _seq(table, r) == top]
+            else:
+                tied = grp
+            if any(_differs(tied[0], r, list(table.columns)) for r in tied[1:]):
+                raise AmbiguousDedupe(f"tied rows differ for key {k}")
+            winners[k] = tied[0]
         dups = len(rows) - len(winners)
         rows = list(winners.values())
 
@@ -141,7 +183,10 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
             if table.delete_mode == "hard":
                 state.remove(existing)
                 del by_key[k]
-            else:
+            elif not existing["_is_deleted"]:
+                # a delete for an absent key is a no-op + idempotence: re-deleting a deleted row is
+                # a no-op (no bump).
+                # Soft delete keeps the existing non-key values, only the audit changes.
                 existing.update(_is_deleted=True, _execution_id=n)
             continue
         if existing is None:
@@ -153,7 +198,8 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
         elif _differs(existing, new, tracked_cols) or existing["_is_deleted"]:
             # a returning soft-deleted key is active again: a soft-deleted key returns active, even
             # with identical values
-            # the last batch wins: the last batch wins regardless of sequence_by
+            # the last batch wins: the last batch wins regardless of sequence_by; sequence_by only
+            # orders rows inside one batch, so no comparison against the state is needed
             for c in table.columns:
                 if c not in table.key:
                     existing[c] = new[c]
