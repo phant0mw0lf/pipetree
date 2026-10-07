@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from pipetree.adapters.spark.dedupe import dedupe_for_merge
@@ -73,3 +75,38 @@ def test_dedupe_without_business_key_returns_input_unchanged(spark):
 
     assert deduped.count() == 2
     assert dropped == 0
+
+
+def test_dedupe_warns_with_the_count_key_and_sequence_by(spark, caplog):
+    df = spark.createDataFrame([(1, "a", 1), (1, "b", 2), (2, "c", 1)], ["id", "name", "v"])
+    table = make_table(business_key=["id"], sequence_by=["v"])
+
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        dedupe_for_merge(df, table)
+
+    [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert record.getMessage() == (
+        "bronze.customer: dropped 1 duplicate row(s) for key (id) - kept the highest (v)"
+    )
+
+
+def test_dedupe_warning_says_the_winner_is_arbitrary_without_sequence_by(spark, caplog):
+    df = spark.createDataFrame([(1, 1, "a"), (1, 1, "b")], ["tenant", "id", "name"])
+    table = make_table(business_key=["tenant", "id"], sequence_by=None)
+
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        dedupe_for_merge(df, table)
+
+    [record] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    message = record.getMessage()
+    assert "dropped 1 duplicate row(s) for key (tenant, id)" in message
+    assert message.endswith("; no sequence_by is declared, so which duplicate won is arbitrary")
+
+
+def test_dedupe_does_not_log_when_nothing_was_dropped(spark, caplog):
+    df = spark.createDataFrame([(1, "a", 1), (2, "b", 1)], ["id", "name", "v"])
+
+    with caplog.at_level(logging.DEBUG, logger="pipetree"):
+        dedupe_for_merge(df, make_table(business_key=["id"], sequence_by=["v"]))
+
+    assert not caplog.records

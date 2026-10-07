@@ -30,6 +30,9 @@ _SCHEMA = StructType(
         StructField("schema_changes", ArrayType(StringType()), nullable=True),
         StructField("error_type", StringType(), nullable=True),
         StructField("error_message", StringType(), nullable=True),
+        # Last on purpose: mergeSchema appends a new column at the end of an
+        # existing table, so a fresh and an evolved run log share column order.
+        StructField("null_keys_dropped", LongType(), nullable=True),
     ]
 )
 
@@ -47,7 +50,10 @@ class DeltaRunLogWriter:
         self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
         df = self._spark.createDataFrame(rows, schema=_SCHEMA)
 
-        writer = df.write.format("delta").mode("overwrite")
+        # mergeSchema: a run log created before a column was added to _SCHEMA
+        # gains it on the next write (old rows read back NULL) instead of
+        # failing the end-of-run write.
+        writer = df.write.format("delta").mode("overwrite").option("mergeSchema", "true")
         if self._spark.catalog.tableExists(self._table_fqn):
             writer = writer.option("replaceWhere", f"_execution_id = {execution_id}")
         writer.saveAsTable(self._table_fqn)

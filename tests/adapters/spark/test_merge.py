@@ -685,3 +685,30 @@ def test_drop_null_business_keys_is_a_noop_without_unknown_member(spark):
 
     assert kept is source
     assert dropped == 0
+
+
+@pytest.mark.parametrize("strategy,merge_fn", [("scd1", merge_scd1), ("scd2", merge_scd2)])
+@pytest.mark.parametrize("path", ["first_run", "init"])
+def test_duplicates_are_warned_about_and_reported_on_the_seed_paths(
+    spark, caplog, strategy, merge_fn, path
+):
+    table = make_table(f"dupseed_{path}", strategy, merge={"sequence_by": ["version"]})
+    if path == "init":  # the table exists, init reloads it from scratch
+        merge_fn(
+            spark,
+            table,
+            spark.createDataFrame([(9, "old", 1)], ["id", "name", "version"]),
+            1,
+            "crm",
+        )
+    source = spark.createDataFrame([(1, "v1", 1), (1, "v2", 2)], ["id", "name", "version"])
+
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        result = merge_fn(spark, table, source, 2, "crm", init=path == "init")
+
+    assert result["duplicates_dropped"] == 1
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "dropped 1 duplicate row(s) for key (id) - kept the highest (version)" in m
+        for m in messages
+    )

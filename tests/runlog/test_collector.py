@@ -38,6 +38,7 @@ def test_build_run_log_rows_includes_core_fields_from_graph_and_result():
             "schema_changes": None,
             "error_type": None,
             "error_message": None,
+            "null_keys_dropped": None,
         }
     ]
 
@@ -122,3 +123,23 @@ def test_build_run_log_rows_covers_every_table_in_the_digest():
     rows = build_run_log_rows(digest, graph)
 
     assert {row["table_fqn"] for row in rows} == {"bronze.a", "silver.b"}
+
+
+def test_build_run_log_rows_carries_null_keys_dropped():
+    graph = make_graph({"bronze.orders": "scd1"})
+    digest = RunDigest(
+        execution_id=1,
+        results={
+            "bronze.orders": TableResult(
+                "bronze.orders",
+                TableStatus.SUCCEEDED,
+                1,
+                1,
+                2,
+                5,
+                details={"rows_written": 3, "null_keys_dropped": 4},
+            )
+        },
+    )
+
+    assert build_run_log_rows(digest, graph)[0]["null_keys_dropped"] == 4

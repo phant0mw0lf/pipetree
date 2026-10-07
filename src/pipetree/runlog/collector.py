@@ -37,4 +37,5 @@ def _row_for(fqn: str, digest: RunDigest, graph: Graph) -> dict[str, Any]:
         "schema_changes": details.get("schema_changes"),
         "error_type": result.error_type,
         "error_message": result.error_message,
+        "null_keys_dropped": details.get("null_keys_dropped"),
     }

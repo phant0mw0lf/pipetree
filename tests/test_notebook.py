@@ -383,3 +383,33 @@ def test_named_backends_can_be_forced(monkeypatch):
     assert isinstance(LiveGraphView(backend="text").backend, TextBackend)
     with pytest.raises(ValueError, match="backend"):
         LiveGraphView(backend="hologram")
+
+
+def test_notes_on_a_table_event_reach_the_live_graph():
+    view, backend, clock = started_view()
+
+    clock.advance(1.5)
+    view.on_table_event(
+        TableEvent(
+            "bronze.a",
+            ProgressStatus.SUCCEEDED,
+            1,
+            duration_ms=5,
+            notes=("2 duplicate row(s) dropped",),
+        )
+    )
+
+    html = backend.updates[-1][0]
+    assert 'data-notes="1"' in html
+    assert "2 duplicate row(s) dropped" in html
+
+
+def test_summary_counts_tables_with_notes_only_when_there_are_any():
+    view, backend, clock = started_view()
+    assert "with notes" not in view.summary()
+
+    view.on_table_event(
+        TableEvent("bronze.a", ProgressStatus.SUCCEEDED, 1, notes=("1 NULL-key row(s) dropped",))
+    )
+
+    assert "⚠ 1 with notes" in view.summary()

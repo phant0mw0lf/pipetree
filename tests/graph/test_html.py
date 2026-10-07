@@ -20,6 +20,7 @@ from pipetree.graph.render import render_graph
 from ..helpers import make_graph
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "small_graph.html"
+SNAPSHOT_NOTES = Path(__file__).parent / "snapshots" / "small_graph_notes.html"
 
 
 def small_graph():
@@ -323,3 +324,109 @@ def test_themes_are_explicit_and_validated():
 
 def test_render_graph_supports_html_format():
     assert render_graph(small_graph(), fmt="html").startswith("<!DOCTYPE html>")
+
+
+NOTES = ("2 duplicate row(s) dropped", "schema: added: email")
+
+
+def noted_states() -> dict[str, NodeState]:
+    states = midrun_states()
+    states["bronze.customer"] = NodeState(
+        ProgressStatus.SUCCEEDED, attempt=1, duration_ms=1200, notes=NOTES
+    )
+    return states
+
+
+def test_a_table_with_notes_gets_a_badge_but_keeps_its_status():
+    html = render_html(small_graph(), noted_states())
+
+    noted = {str(a["data-fqn"]): a for a in nodes(html) if a.get("data-notes")}
+    assert list(noted) == ["bronze.customer"]
+    assert noted["bronze.customer"]["data-status"] == "succeeded"
+    assert html.count('class="ptg-badge"') == 1
+
+
+def test_the_tooltip_lists_the_notes_one_per_line():
+    html = render_html(small_graph(), noted_states())
+
+    tooltip = next(t for t in parse(html).titles if t.startswith("bronze.customer"))
+    assert "notes:\n  2 duplicate row(s) dropped\n  schema: added: email" in tooltip
+
+
+def test_header_pill_and_legend_entry_appear_only_with_notes():
+    states = noted_states()
+    states["bronze.orders"] = NodeState(
+        ProgressStatus.SUCCEEDED, notes=("1 NULL-key row(s) dropped",)
+    )
+    with_notes = render_html(small_graph(), states)
+    without = render_html(small_graph(), midrun_states())
+
+    assert 'ptg-chip-notes"><span class="ptg-glyph">⚠</span> 2 with notes</span>' in with_notes
+    assert (
+        '<span class="ptg-badge-key">⚠</span>merge changed data - hover for notes</span>'
+        in with_notes
+    )
+    assert "with notes" not in without
+    assert "ptg-key-notes" not in without
+    assert "ptg-badge" not in without.split("</style>")[1]
+
+
+def test_digest_table_gets_a_notes_column_only_when_a_table_has_notes():
+    graph = small_graph()
+    noted = RunDigest(
+        execution_id=1,
+        results={
+            "bronze.customer": TableResult(
+                "bronze.customer",
+                TableStatus.SUCCEEDED,
+                1,
+                1,
+                2,
+                5,
+                details={"duplicates_dropped": 2},
+            ),
+            "bronze.orders": TableResult("bronze.orders", TableStatus.SUCCEEDED, 1, 1, 2, 5),
+        },
+    )
+    plain = RunDigest(1, {"bronze.orders": noted.results["bronze.orders"]})
+
+    with_notes = render_html(graph, states_from_digest(noted), digest=noted)
+    without = render_html(graph, states_from_digest(plain), digest=plain)
+
+    assert "<th>notes</th>" in with_notes
+    assert "2 duplicate row(s) dropped</td>" in with_notes
+    assert "<th>notes</th>" not in without
+
+
+def test_notes_are_html_escaped_in_the_tooltip_and_the_digest_cell():
+    evil = '<script>alert(1)</script>" onerror="x'
+    result = TableResult(
+        "bronze.customer",
+        TableStatus.SUCCEEDED,
+        1,
+        1,
+        2,
+        5,
+        details={"schema_changes": [evil]},
+    )
+    digest = RunDigest(execution_id=1, results={"bronze.customer": result})
+
+    html = render_html(small_graph(), states_from_digest(digest), digest=digest)
+
+    tooltip = next(t for t in parse(html).titles if t.startswith("bronze.customer"))
+    assert f"schema: {evil}" in tooltip  # the parser unescapes: text, not markup
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html.split("<title>")[1]
+    cell = html.split('<td class="ptg-notes">')[1].split("</td>")[0]
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in cell
+    assert "<script" not in html
+    # no element carries an injected attribute
+    assert not any("onerror" in attrs for _tag, attrs in parse(html).tags)
+
+
+def test_snapshot_with_notes():
+    html = render_html(
+        small_graph(), noted_states(), execution_id=1, title="snapshot", elapsed_s=3.0
+    )
+    if os.environ.get("PIPETREE_UPDATE_SNAPSHOTS"):
+        SNAPSHOT_NOTES.write_text(html, encoding="utf-8")
+    assert SNAPSHOT_NOTES.read_text(encoding="utf-8") == html

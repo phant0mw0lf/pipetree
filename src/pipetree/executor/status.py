@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from pipetree.executor.notes import notes_for
+
 
 class TableStatus(StrEnum):
     SUCCEEDED = "succeeded"
@@ -31,6 +33,11 @@ class TableResult:
     error_type: str | None = None
     error_message: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def notes(self) -> list[str]:
+        """What the merge quietly changed - see `pipetree.executor.notes`."""
+        return notes_for(self.details)
 
 
 @dataclass(frozen=True)
