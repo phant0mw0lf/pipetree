@@ -747,8 +747,8 @@ def test_drop_null_business_keys_drops_a_null_in_any_key_column(spark):
     assert sorted(r["id"] for r in kept.collect()) == [1, 3]
 
 
-def test_drop_null_business_keys_is_a_noop_without_unknown_member(spark):
-    table = make_table("dropnull2", "scd1")
+def test_drop_null_business_keys_is_a_noop_for_replace_and_append_without_unknown_member(spark):
+    table = make_table("dropnull2", "replace")
     source = spark.createDataFrame([(None, "x")], "id STRING, name STRING")
 
     kept, dropped = drop_null_business_keys(source, table)
@@ -1083,3 +1083,128 @@ def test_scd1_without_ignore_columns_still_bumps_on_any_change(spark):
 
     row = rows(spark.table(table.fqn))[1]
     assert (row["seen"], row["_execution_id"]) == (200, 2)
+
+
+# ---------------------------------- NULL business keys (NULL business keys)
+# A composite key with a NULL in ONE component is a legitimate value: it is
+# matched null-safely, so the same key hits the same row run after run.
+
+_NK_COLS = "a STRING, b INT, v STRING, del BOOLEAN"
+
+
+def _nk_table(name: str, strategy: str, mode: str | None = None) -> Table:
+    merge: dict[str, Any] = {}
+    if mode:
+        merge = {"delete_when": "del = true", "delete_mode": mode}
+    return make_table(f"{name}_{strategy}", strategy, business_key=["a", "b"], merge=merge)
+
+
+def _nk_run(spark, table, data, execution_id):
+    return _MERGE[table.strategy](
+        spark, table, spark.createDataFrame(data, _NK_COLS), execution_id, "crm"
+    )
+
+
+def _nk_state(spark, table):
+    cols = ["a", "b", "v", "_is_deleted"] + (["_is_current"] if table.strategy == "scd2" else [])
+    return sorted(
+        (tuple(r[c] for c in cols) for r in spark.table(table.fqn).collect()),
+        key=lambda t: tuple(str(x) for x in t),
+    )
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_a_partially_null_composite_key_is_inserted_once_and_never_piles_up(spark, strategy):
+    table = _nk_table("nk_once", strategy)
+    batch = [(None, 1, "x", False), ("k", None, "y", False)]
+
+    for execution_id in (1, 2, 3):
+        _nk_run(spark, table, batch, execution_id)
+
+    expected = [(None, 1, "x", False), ("k", None, "y", False)]
+    if strategy == "scd2":
+        expected = [(a, b, v, d, True) for a, b, v, d in expected]
+    assert _nk_state(spark, table) == sorted(expected, key=lambda t: tuple(str(x) for x in t))
+
+
+def test_scd1_a_partially_null_key_with_a_changed_value_is_updated_in_place(spark):
+    table = _nk_table("nk_upd", "scd1")
+    _nk_run(spark, table, [(None, 1, "x", False)], 1)
+
+    _nk_run(spark, table, [(None, 1, "z", False)], 2)
+    _nk_run(spark, table, [(None, 1, "z", False)], 3)
+
+    assert _nk_state(spark, table) == [(None, 1, "z", False)]
+    assert spark.table(table.fqn).collect()[0]["_execution_id"] == 2
+
+
+def test_scd2_a_partially_null_key_that_changes_closes_the_old_version(spark):
+    table = _nk_table("nk_ver", "scd2")
+    _nk_run(spark, table, [(None, 1, "x", False)], 1)
+
+    _nk_run(spark, table, [(None, 1, "z", False)], 2)
+    _nk_run(spark, table, [(None, 1, "z", False)], 3)
+
+    assert _nk_state(spark, table) == [
+        (None, 1, "x", False, False),
+        (None, 1, "z", False, True),
+    ]
+
+
+def test_scd2_a_partially_null_key_that_is_unchanged_stays_one_current_version(spark):
+    table = _nk_table("nk_same", "scd2")
+    for execution_id in (1, 2, 3):
+        _nk_run(spark, table, [("k", None, "x", False)], execution_id)
+
+    assert _nk_state(spark, table) == [("k", None, "x", False, True)]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_dedupe_treats_the_same_partially_null_key_as_one_key(spark, strategy):
+    table = _nk_table("nk_dedupe", strategy)
+    batch = [(None, 1, "x", False), (None, 1, "x", False), (None, 2, "y", False)]
+
+    result = _nk_run(spark, table, batch, 1)
+
+    assert result["duplicates_dropped"] == 1
+    assert spark.table(table.fqn).count() == 2
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_dedupe_counts_duplicates_of_a_partially_null_key_on_a_later_run(spark, strategy):
+    table = _nk_table("nk_dedupe2", strategy)
+    _nk_run(spark, table, [(None, 1, "x", False)], 1)
+
+    result = _nk_run(spark, table, [(None, 1, "x", False), (None, 1, "x", False)], 2)
+
+    assert result["duplicates_dropped"] == 1
+    assert spark.table(table.fqn).count() == 1
+
+
+def test_scd1_hard_delete_of_a_partially_null_key_removes_the_row(spark):
+    table = _nk_table("nk_hard", "scd1", "hard")
+    _nk_run(spark, table, [(None, 1, "x", False), ("k", None, "y", False)], 1)
+
+    _nk_run(spark, table, [(None, 1, "x", True)], 2)
+
+    assert _nk_state(spark, table) == [("k", None, "y", False)]
+
+
+def test_scd1_soft_delete_of_a_partially_null_key_marks_the_row(spark):
+    table = _nk_table("nk_soft", "scd1", "soft")
+    _nk_run(spark, table, [(None, 1, "x", False)], 1)
+
+    _nk_run(spark, table, [(None, 1, "x", True)], 2)
+    _nk_run(spark, table, [(None, 1, "x", True)], 3)
+
+    assert _nk_state(spark, table) == [(None, 1, "x", True)]
+
+
+def test_scd2_delete_of_a_partially_null_key_closes_the_current_version(spark):
+    table = _nk_table("nk_del", "scd2", "soft")
+    _nk_run(spark, table, [(None, 1, "x", False)], 1)
+
+    _nk_run(spark, table, [(None, 1, "x", True)], 2)
+    _nk_run(spark, table, [(None, 1, "x", True)], 3)
+
+    assert _nk_state(spark, table) == [(None, 1, "x", True, False)]
