@@ -144,17 +144,13 @@ SMOKE: dict[str, tuple[Case, list[str]]] = {
                 [_row(1, "a", seq=1), _row(2, "b", seq=1)],
                 [_row(1, "x", seq=2), _row(2, "b", seq=1)],
                 [_row(2, "b", seq=3, op="D"), _row(3, "c", seq=3)],
-                [
-                    _row(1, "x", seq=2),
-                    _row(3, "c", seq=3),
-                ],  # untouched (re-run safe, see redelete-bump)
+                [_row(1, "x", seq=2), _row(3, "c", seq=3)],  # untouched
             ],
             has_delete=True,
         ),
         [],
     ),
-    # ... and the deleted key returns (a returning soft-deleted key is active again): today's
-    # revive-after-delete
+    # ... and the deleted key returns (a returning soft-deleted key is active again): active again
     "scd1-resurrect": (
         _case(
             "scd1",
@@ -166,7 +162,22 @@ SMOKE: dict[str, tuple[Case, list[str]]] = {
             ],
             has_delete=True,
         ),
-        ["revive-after-delete"],
+        [],
+    ),
+    # a returning soft-deleted key is active again, hand-minimised: delete then return, identical /
+    # changed values
+    "scd1-revive-identical": (
+        _case("scd1", [[_row(1)], [_row(1, op="D")], [_row(1)]], has_delete=True),
+        [],
+    ),
+    "scd1-revive-changed": (
+        _case("scd1", [[_row(1)], [_row(1, op="D")], [_row(1, "b")]], has_delete=True),
+        [],
+    ),
+    # re-deleting a soft-deleted row is a no-op
+    "scd1-redelete": (
+        _case("scd1", [[_row(1)], [_row(1, op="D")], [_row(1, op="D")]], has_delete=True),
+        [],
     ),
     # change, delete, return (a returning scd2 key opens a new version: a new current version)
     "scd2": (

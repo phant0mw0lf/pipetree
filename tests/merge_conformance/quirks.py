@@ -33,10 +33,6 @@ from pipetree.testing.merge_model import (
 )
 
 FLAGS: dict[str, str] = {
-    # merge.py:191 `whenMatchedUpdate(... AND ({change_cond}), set=update_values)` and
-    # audit.py:29 `update_audit_values` (no `_is_deleted`): a soft-deleted row that
-    # returns is updated only on a tracked change, and stays `_is_deleted = true`.
-    "revive-after-delete": "scd1 soft-deleted key returning stays deleted",
     # merge.py:355 `drop_null_business_keys` only acts on unknown_member tables, and
     # merge.py:558 `_key_condition` matches with `=`, so a whole-NULL key on an
     # scd1/scd2 table is kept and never matches: inserted again on every run.
@@ -50,9 +46,6 @@ FLAGS: dict[str, str] = {
     # merge.py:565 `_comparable_columns` drops ignore_columns from change detection
     # and nothing else writes them: a change in ignored columns alone is lost.
     "ignored-column-stale": "ignore_columns change alone not written",
-    # merge.py:184 `whenMatchedUpdate(condition="source.is_delete = true", ...)`
-    # without a target `_is_deleted` check: re-deleting bumps the audit columns.
-    "redelete-bump": "scd1 re-delete of a soft-deleted row bumps _execution_id (re-run = no-op)",
 }
 
 # Model-independent invariants a quirk breaks (see merge_harness.INVARIANTS).
@@ -65,7 +58,6 @@ _TOLERATES: dict[str, frozenset[str]] = {
     "composite-null-key": frozenset(
         {"identity_unique", "scd2_one_current", "scd2_current_not_latest", "idempotence"}
     ),
-    "redelete-bump": frozenset({"idempotence"}),
 }
 
 
@@ -173,20 +165,11 @@ class QuirkModel:
                     continue
                 if table.delete_mode == "hard":
                     state.remove(existing)
-                elif not existing["_is_deleted"] or "redelete-bump" in q:
+                elif not existing["_is_deleted"]:
                     existing.update(_is_deleted=True, _execution_id=n)
                 continue
             if existing is None:
                 state.append(_audit(new, n, table))
-            elif "revive-after-delete" in q and existing["_is_deleted"]:
-                if _differs(existing, new, tracked):
-                    for c in table.columns:
-                        if c not in table.key:
-                            existing[c] = new[c]
-                    existing["_execution_id"] = n  # _is_deleted stays True
-                elif _differs(existing, new, ignored) and "ignored-column-stale" not in q:
-                    for c in ignored:
-                        existing[c] = new[c]
             elif _differs(existing, new, tracked) or existing["_is_deleted"]:
                 for c in table.columns:
                     if c not in table.key:
