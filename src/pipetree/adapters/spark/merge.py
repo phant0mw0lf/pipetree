@@ -192,12 +192,22 @@ def merge_scd1(
         merge_builder = merge_builder.whenMatchedDelete(condition=f"source.{_IS_DELETE_COL} = true")
 
     row_count = prepared.count()
-    final_builder = merge_builder.whenMatchedUpdate(
+    merge_builder = merge_builder.whenMatchedUpdate(
         condition=(
             f"source.{_IS_DELETE_COL} = false AND ({change_cond} OR target._is_deleted = true)"
         ),
         set=update_values,
-    ).whenNotMatchedInsert(condition=f"source.{_IS_DELETE_COL} = false", values=insert_values)
+    )
+    in_place = _ignored_change_update(
+        columns, table, reconciliation.target_columns, "target._is_deleted = false"
+    )
+    if in_place is not None:
+        # Only ignored columns changed (ignore_columns alone update in place): written in place,
+        # audit untouched.
+        merge_builder = merge_builder.whenMatchedUpdate(condition=in_place[0], set=in_place[1])
+    final_builder = merge_builder.whenNotMatchedInsert(
+        condition=f"source.{_IS_DELETE_COL} = false", values=insert_values
+    )
     if reconciliation.needs_schema_evolution:
         final_builder = final_builder.withSchemaEvolution()
     final_builder.execute()
@@ -272,16 +282,22 @@ def merge_scd2(
 
     row_count = prepared.count()
     delta_table = DeltaTable.forName(spark, table.fqn)
-    final_builder = (
+    merge_builder = (
         delta_table.alias("target")
         .merge(prepared.alias("source"), key_cond)
         .whenMatchedUpdate(condition=f"source.{_IS_DELETE_COL} = true", set=close_for_delete)
         .whenMatchedUpdate(
             condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=close_for_change
         )
-        .whenNotMatchedInsert(
-            condition=f"source.{_IS_DELETE_COL} = false", values=insert_new_key_values
-        )
+    )
+    in_place = _ignored_change_update(columns, table, reconciliation.target_columns)
+    if in_place is not None:
+        # Only ignored columns changed (ignore_columns alone update in place): the CURRENT version
+        # is updated
+        # in place (the key condition only matches current rows); no new version.
+        merge_builder = merge_builder.whenMatchedUpdate(condition=in_place[0], set=in_place[1])
+    final_builder = merge_builder.whenNotMatchedInsert(
+        condition=f"source.{_IS_DELETE_COL} = false", values=insert_new_key_values
     )
     if reconciliation.needs_schema_evolution:
         final_builder = final_builder.withSchemaEvolution()
@@ -588,12 +604,51 @@ def _comparable_columns(
     return candidates
 
 
+def _ignored_columns(
+    columns: list, table: Table, existing_columns: frozenset[str] | None = None
+) -> list:
+    """Ignored columns present in the source (and, when known, in the target:
+    a just-added column has no old value to compare against)."""
+    cols = [c for c in columns if c in table.merge.ignore_columns and c not in table.business_key]
+    if existing_columns is not None:
+        cols = [c for c in cols if c in existing_columns]
+    return cols
+
+
+def _ignored_change_update(
+    columns: list,
+    table: Table,
+    existing_columns: frozenset[str] | None,
+    extra_condition: str | None = None,
+) -> tuple[str, dict[str, str | Column]] | None:
+    """Condition and `set` for the in-place update of a matched row whose only
+    change is in `ignore_columns` (ignore_columns alone update in place): the ignored columns are
+    written,
+    audit columns are not bumped. None when there is nothing to compare."""
+    compare = _ignored_columns(columns, table, existing_columns)
+    if not compare:
+        return None
+    differs = " OR ".join(f"NOT (target.{c} <=> source.{c})" for c in compare)
+    condition = f"source.{_IS_DELETE_COL} = false"
+    if extra_condition:
+        condition += f" AND {extra_condition}"
+    condition += f" AND ({differs})"
+    # Written: every ignored column the source carries (even a just-added one).
+    written = [
+        c for c in columns if c in table.merge.ignore_columns and c not in table.business_key
+    ]
+    set_values: dict[str, str | Column] = {c: f"source.{c}" for c in written}
+    return condition, set_values
+
+
 def _change_condition_sql(
     columns: list, table: Table, existing_columns: frozenset[str] | None = None
 ) -> str:
     compare_cols = _comparable_columns(columns, table, existing_columns)
     if not compare_cols:
-        return "true"
+        # No tracked column: nothing can be a tracked change (an ignored-only
+        # change is handled by `_ignored_change_update`).
+        return "false"
     same = " AND ".join(f"target.{c} <=> source.{c}" for c in compare_cols)
     return f"NOT ({same})"
 
@@ -612,7 +667,8 @@ def _rows_that_changed(
     joined = source_df.join(current_df, join_cond, "inner")
 
     if not compare_cols:
-        return joined.select(*[source_df[c] for c in columns])
+        # No tracked column: never a tracked change (matches `_change_condition_sql`).
+        return joined.filter(F.lit(False)).select(*[source_df[c] for c in columns])
 
     conditions = [~source_df[col].eqNullSafe(current_df[col]) for col in compare_cols]
     diff = reduce(operator.or_, conditions)

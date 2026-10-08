@@ -193,6 +193,26 @@ SMOKE: dict[str, tuple[Case, list[str]]] = {
         ),
         [],
     ),
+    # ignore_columns alone update in place, hand-minimised: an ignored column alone is updated in
+    # place
+    "scd1-ignored-change-in-place": (
+        _case(
+            "scd1",
+            [[_row(1, seen=0)], [_row(1, seen=1)], [_row(1, "b", seen=2)], [_row(1, "b", seen=2)]],
+            extra=("seen",),
+            ignore=("seen",),
+        ),
+        [],
+    ),
+    "scd2-ignored-change-in-place": (
+        _case(
+            "scd2",
+            [[_row(1, seen=0)], [_row(1, seen=1)], [_row(1, "b", seen=2)], [_row(1, "b", seen=3)]],
+            extra=("seen",),
+            ignore=("seen",),
+        ),
+        [],
+    ),
     # change, delete, return (a returning scd2 key opens a new version: a new current version)
     "scd2": (
         _case(
@@ -256,32 +276,16 @@ def test_harness_reports_a_wrong_stat(spark, monkeypatch):
 
 
 def test_attribution_mode_reports_independent_later_divergences(spark):
-    # ignored-column-stale at batch 1 (ignored column alone), null-key-kept at batch 2 (NULL
-    # business key kept).
-    case = _case(
-        "scd1",
-        [[_row(1, seen=0)], [_row(1, seen=1)], [_row(None, seen=0)]],
-        extra=("seen",),
-        ignore=("seen",),
-        sequence_by=(),
-    )
+    # null-key-kept at batch 1 (NULL business key kept) and again at batch 2 (re-inserted).
+    case = _case("scd1", [[_row(1)], [_row(None)], [_row(None)]], sequence_by=())
     first_only = run_case(spark, case)
     assert {d.batch_index for d in first_only} == {1}
 
     every = run_case(spark, case, attribution=True)
-    # (the NULL key also breaks the identity invariant in batch 2: only rows are checked here)
     by_batch = {d.batch_index: d for d in every if d.kind == "rows"}
     assert sorted(by_batch) == [1, 2]
-    assert "'seen': 1" in by_batch[1].detail  # model: the ignored column is updated
-    assert "'id': None" in by_batch[2].detail  # table: the NULL-key row was written
+    assert "'id': None" in by_batch[1].detail  # table: the NULL-key row was written
+    assert "'id': None" in by_batch[2].detail  # table: and written once more
 
-    assert (
-        run_case(
-            spark,
-            case,
-            model=QuirkModel({"null-key-kept", "ignored-column-stale"}),
-            attribution=True,
-        )
-        == []
-    )
-    assert run_case(spark, case, model=QuirkModel({"ignored-column-stale"}), attribution=True) != []
+    assert run_case(spark, case, model=QuirkModel({"null-key-kept"}), attribution=True) == []
+    assert run_case(spark, case, model=QuirkModel({"composite-null-key"}), attribution=True) != []

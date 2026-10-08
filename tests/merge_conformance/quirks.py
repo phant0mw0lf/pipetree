@@ -1,9 +1,8 @@
 """`QuirkModel`: the reference model with one switch per KNOWN pipetree deviation
 (the deviations in `known_divergences.py`), used to ATTRIBUTE divergences.
 
-`run_case(spark, case, model=QuirkModel({"null-key-kept", "ignored-column-stale"}))` compares the
-real
-table with "the model as if today's quirks null-key-kept and ignored-column-stale were the rules". A
+`run_case(spark, case, model=QuirkModel({"null-key-kept", "composite-null-key"}))` compares the real
+table with "the model as if today's quirks null-key-kept and composite-null-key were the rules". A
 seed
 listed under deviations S must match `QuirkModel(S)` over its whole history, and
 every flag in S must matter; otherwise the divergence is unexplained.
@@ -40,9 +39,6 @@ FLAGS: dict[str, str] = {
     # merge.py:558 `_key_condition`: `target.k = source.k` is not null-safe, so a
     # composite key with one NULL component never matches.
     "composite-null-key": "composite key with a NULL component never matches",
-    # merge.py:565 `_comparable_columns` drops ignore_columns from change detection
-    # and nothing else writes them: a change in ignored columns alone is lost.
-    "ignored-column-stale": "ignore_columns change alone not written",
 }
 
 # Model-independent invariants a quirk breaks (see merge_harness.INVARIANTS).
@@ -149,7 +145,6 @@ class QuirkModel:
         return nulls > 0 and "composite-null-key" in self.flags
 
     def _scd1(self, table, state, winners, n, is_del) -> None:
-        q = self.flags
         tracked = [c for c in table.columns if c not in table.key and c not in table.ignore]
         ignored = [c for c in table.ignore if c not in table.key]
         for new in winners:
@@ -172,7 +167,7 @@ class QuirkModel:
                     if c not in table.key:
                         existing[c] = new[c]
                 existing.update(_is_deleted=False, _execution_id=n)
-            elif _differs(existing, new, ignored) and "ignored-column-stale" not in q:
+            elif _differs(existing, new, ignored):
                 for c in ignored:
                     existing[c] = new[c]
 
@@ -193,7 +188,7 @@ class QuirkModel:
             elif _differs(current, new, tracked):
                 current.update(_is_current=False, _execution_id=n)
                 state.append(_audit(new, n, table))
-            elif _differs(current, new, ignored) and "ignored-column-stale" not in self.flags:
+            elif _differs(current, new, ignored):
                 for c in ignored:
                     current[c] = new[c]
 

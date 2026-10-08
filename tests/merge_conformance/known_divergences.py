@@ -64,8 +64,6 @@ DEVIATIONS: dict[str, str] = {
     "never matches, so it is re-inserted on every run",
     "composite-null-key": "a composite key with a NULL in one component is matched with"
     " `=` (not null-safe), so the row is re-inserted on every run",
-    "ignored-column-stale": "a change in an ignore_columns column alone is not written "
-    "(scd1 and scd2)",
 }
 
 # BEGIN GENERATED (tests.merge_conformance.regen) - do not edit by hand
@@ -92,14 +90,6 @@ _LISTS: dict[str, list[tuple[str, int]]] = {
         "scd2",
         "45 86 106 150 151 238 249 264 296 ",
     ),
-    "ignored-column-stale": _seeds(
-        "scd1",
-        "76 79 93 103 111 118 132 136 148 194 206 215 217 228 283 298 ",
-    )
-    + _seeds(
-        "scd2",
-        "14 25 27 29 44 73 78 89 105 124 193 195 217 293 ",
-    ),
 }
 # END GENERATED
 
@@ -115,18 +105,6 @@ HAND_REPROS: dict[str, Case] = {
     "composite-null-key": _case(
         "scd1", [[_r({"a": None, "b": 1})], [_r({"a": None, "b": 1})]], key=("a", "b")
     ),
-    "ignored-column-stale-scd2": _case(
-        "scd2",
-        [[_r(_id(1), seen=0)], [_r(_id(1), seen=1)]],
-        extra=("seen",),
-        ignore=("seen",),
-    ),
-    "ignored-column-stale": _case(
-        "scd1",
-        [[_r(_id(1), seen=0)], [_r(_id(1), seen=1)]],
-        extra=("seen",),
-        ignore=("seen",),
-    ),
 }
 
 
@@ -135,5 +113,5 @@ def deviations_for(strategy: str, seed: int) -> list[str]:
 
 
 def deviation_of(repro_id: str) -> str:
-    """`"ignored-column-stale-scd2"` -> `"ignored-column-stale"`."""
+    """`"null-key-kept-scd2"` -> `"null-key-kept"`."""
     return max((f for f in DEVIATIONS if repro_id == f or repro_id.startswith(f + "-")), key=len)
