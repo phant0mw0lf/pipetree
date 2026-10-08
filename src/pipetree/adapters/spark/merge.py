@@ -171,6 +171,9 @@ def merge_scd1(
     change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
     insert_values = _column_mapping(columns, insert_audit_values(execution_id, source_system, now))
     update_values = _column_mapping(columns, update_audit_values(execution_id, source_system, now))
+    # A key that returns after a soft delete is active again (a returning soft-deleted key is active
+    # again).
+    update_values["_is_deleted"] = F.lit(False)
 
     delta_table = DeltaTable.forName(spark, table.fqn)
     merge_builder = delta_table.alias("target").merge(prepared.alias("source"), key_cond)
@@ -181,14 +184,19 @@ def merge_scd1(
             "_is_deleted": F.lit(True),
         }
         merge_builder = merge_builder.whenMatchedUpdate(
-            condition=f"source.{_IS_DELETE_COL} = true", set=soft_delete_values
+            # Deleting an already soft-deleted row is a no-op (re-runs are safe).
+            condition=f"source.{_IS_DELETE_COL} = true AND target._is_deleted = false",
+            set=soft_delete_values,
         )
     elif table.merge.delete_mode == "hard":
         merge_builder = merge_builder.whenMatchedDelete(condition=f"source.{_IS_DELETE_COL} = true")
 
     row_count = prepared.count()
     final_builder = merge_builder.whenMatchedUpdate(
-        condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=update_values
+        condition=(
+            f"source.{_IS_DELETE_COL} = false AND ({change_cond} OR target._is_deleted = true)"
+        ),
+        set=update_values,
     ).whenNotMatchedInsert(condition=f"source.{_IS_DELETE_COL} = false", values=insert_values)
     if reconciliation.needs_schema_evolution:
         final_builder = final_builder.withSchemaEvolution()

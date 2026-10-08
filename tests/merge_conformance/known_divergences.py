@@ -59,10 +59,6 @@ def _seeds(strategy: str, seeds: str) -> list[tuple[str, int]]:
 
 
 DEVIATIONS: dict[str, str] = {
-    "revive-after-delete": "a soft-deleted scd1 key that returns stays `_is_deleted = "
-    "true` (identical values: the row is untouched; changed "
-    "values: the values and `_execution_id` move, but "
-    "`_is_deleted` stays true)",
     "null-key-kept": "a NULL business key on an scd1/scd2 table without "
     "unknown_member is not dropped (no null_keys_dropped); it "
     "never matches, so it is re-inserted on every run",
@@ -73,17 +69,10 @@ DEVIATIONS: dict[str, str] = {
     "duplicates) instead of removing them before the dedupe",
     "ignored-column-stale": "a change in an ignore_columns column alone is not written "
     "(scd1 and scd2)",
-    "redelete-bump": "a repeated soft delete of an already deleted scd1 row bumps "
-    "`_execution_id` and `_updated_at` again (it should be a "
-    "no-op)",
 }
 
 # BEGIN GENERATED (tests.merge_conformance.regen) - do not edit by hand
 _LISTS: dict[str, list[tuple[str, int]]] = {
-    "revive-after-delete": _seeds(
-        "scd1",
-        "51 53 69 144 146 154 165 207 226 ",
-    ),
     "null-key-kept": _seeds(
         "scd1",
         "0 1 4 10 11 20 24 28 45 48 49 56 62 64 67 68 69 73 82 83 85 87 88 100 103 "
@@ -127,10 +116,6 @@ _LISTS: dict[str, list[tuple[str, int]]] = {
         "scd2",
         "14 25 27 29 44 73 78 89 105 124 193 195 210 217 293 ",
     ),
-    "redelete-bump": _seeds(
-        "scd1",
-        "51 53 58 69 80 139 146 154 164 165 206 214 231 249 284 ",
-    ),
 }
 # END GENERATED
 
@@ -141,12 +126,6 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, list[tuple[str, int]]]] = {
 # Hand-minimised reproductions, keyed "<deviation id>[-<variant>]" (run by
 # test_deviation_minimal_repro).
 HAND_REPROS: dict[str, Case] = {
-    "revive-after-delete": _case(
-        "scd1", [[_r(_id(1))], [_r(_id(1), op="D")], [_r(_id(1))]], has_delete=True
-    ),
-    "revive-after-delete-changed-values": _case(
-        "scd1", [[_r(_id(1))], [_r(_id(1), op="D")], [_r(_id(1), "b")]], has_delete=True
-    ),
     "null-key-kept": _case("scd1", [[_r(_id(None))], [_r(_id(None))]]),
     "null-key-kept-scd2": _case("scd2", [[_r(_id(None))], [_r(_id(None))]]),
     "composite-null-key": _case(
@@ -173,11 +152,6 @@ HAND_REPROS: dict[str, Case] = {
         [[_r(_id(1), seen=0)], [_r(_id(1), seen=1)]],
         extra=("seen",),
         ignore=("seen",),
-    ),
-    "redelete-bump": _case(
-        "scd1",
-        [[_r(_id(1))], [_r(_id(1), op="D")], [_r(_id(1), op="D")]],
-        has_delete=True,
     ),
 }
 
