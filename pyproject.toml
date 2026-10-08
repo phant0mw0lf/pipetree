@@ -56,6 +56,7 @@ venv = ".venv"
 testpaths = ["tests"]
 markers = [
     "spark: requires a JVM + PySpark session (skipped when unavailable)",
+    "conformance: slow generated merge-conformance cases (PIPETREE_CONFORMANCE_SEEDS)",
 ]
 
 [tool.coverage.run]
