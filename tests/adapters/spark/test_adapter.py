@@ -566,3 +566,101 @@ def test_a_fact_resolves_a_null_unknown_member_and_matched_rows_unchanged(spark,
     assert len(null_safe) == 3
     missing = [r for r in null_safe if r["sale_id"] == 3]
     assert len(missing) == 1 and missing[0]["_execution_id"] is not None
+
+
+# ---------------------------------- NULL business keys (NULL business keys)
+
+
+def _nk_table(tmp_path, strategy: str, fqn: str, key: list[str], **overrides):
+    return make_table(
+        logic="nk.sql",
+        strategy=strategy,
+        fqn=fqn,
+        source=None,
+        business_key=key,
+        **overrides,
+    )
+
+
+def _nk_run(adapter, tmp_path, table, sql: str, execution_id: int):
+    (tmp_path / "nk.sql").write_text(sql)
+    return adapter.run_table(table, execution_id=execution_id)
+
+
+def _state(spark, table):
+    return sorted(
+        (tuple(r.asDict().values()) for r in spark.table(table.fqn).select("k", "v").collect()),
+        key=lambda t: tuple(str(x) for x in t),
+    )
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_a_null_single_column_key_is_dropped_and_counted_without_unknown_member(
+    spark, tmp_path, caplog, strategy
+):
+    import logging
+
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _nk_table(tmp_path, strategy, f"nk_single.t_{strategy}", ["k"])
+    sql = "SELECT 'a' AS k, 'x' AS v UNION ALL SELECT CAST(NULL AS STRING), 'y'"
+
+    with caplog.at_level(logging.WARNING, logger="pipetree.adapters.spark"):
+        results = [_nk_run(adapter, tmp_path, table, sql, i) for i in (1, 2, 3)]
+
+    assert all(r is not None and r["null_keys_dropped"] == 1 for r in results)
+    assert "nk_single.t_" + strategy in caplog.text
+    assert "a NULL business key cannot identify a row" in caplog.text
+    assert _state(spark, table) == [("a", "x")]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_a_partially_null_composite_key_is_a_value_and_a_whole_null_key_is_dropped(
+    spark, tmp_path, strategy
+):
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _nk_table(tmp_path, strategy, f"nk_comp.t_{strategy}", ["k", "j"])
+    sql = (
+        "SELECT CAST(NULL AS STRING) AS k, 1 AS j, 'x' AS v "
+        "UNION ALL SELECT 'a', CAST(NULL AS INT), 'y' "
+        "UNION ALL SELECT CAST(NULL AS STRING), CAST(NULL AS INT), 'z'"
+    )
+
+    results = [_nk_run(adapter, tmp_path, table, sql, i) for i in (1, 2, 3)]
+
+    assert all(r is not None and r["null_keys_dropped"] == 1 for r in results)
+    stored = [(r["k"], r["j"], r["v"]) for r in spark.table(table.fqn).collect()]
+    assert sorted(stored, key=str) == [("a", None, "y"), (None, 1, "x")]
+
+
+@pytest.mark.parametrize("strategy", ["replace", "scd1", "scd2", "append"])
+def test_unknown_member_tables_still_drop_a_null_in_any_key_column(spark, tmp_path, strategy):
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _nk_table(tmp_path, strategy, f"nk_um.t_{strategy}", ["k", "j"], unknown_member=True)
+    sql = (
+        "SELECT 'a' AS k, 1 AS j, 'x' AS v "
+        "UNION ALL SELECT 'b', CAST(NULL AS INT), 'y' "
+        "UNION ALL SELECT CAST(NULL AS STRING), 2, 'z'"
+    )
+
+    result = _nk_run(adapter, tmp_path, table, sql, 1)
+
+    assert result is not None and result["null_keys_dropped"] == 2
+    assert {r["v"] for r in spark.table(table.fqn).collect()} == {"x", None}
+
+
+@pytest.mark.parametrize("strategy", ["replace", "append"])
+def test_replace_and_append_keep_null_key_rows_without_unknown_member(
+    spark, tmp_path, caplog, strategy
+):
+    import logging
+
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+    table = _nk_table(tmp_path, strategy, f"nk_keep.t_{strategy}", ["k"])
+    sql = "SELECT 'a' AS k, 'x' AS v UNION ALL SELECT CAST(NULL AS STRING), 'y'"
+
+    with caplog.at_level(logging.WARNING, logger="pipetree.adapters.spark"):
+        result = _nk_run(adapter, tmp_path, table, sql, 1)
+
+    assert result is not None and "null_keys_dropped" not in result
+    assert "NULL business key" not in caplog.text
+    assert _state(spark, table) == [(None, "y"), ("a", "x")]

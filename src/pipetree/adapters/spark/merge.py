@@ -368,28 +368,41 @@ def seed_unknown_member(spark: SparkSession, table: Table, execution_id: int) ->
 
 
 def drop_null_business_keys(source: DataFrame, table: Table) -> tuple[DataFrame, int]:
-    """On an `unknown_member` table, drop source rows with a NULL in any
-    business key column, returning how many were dropped.
+    """Drop source rows whose NULL business key cannot be merged, returning
+    how many were dropped (NULL business keys).
 
-    NULL is the unknown member's key for a string column, so a source row
-    with a NULL key would be indistinguishable from it in a null-safe fact
-    join - and, never matching an `=` merge condition, it would be
-    re-inserted on every scd1/scd2 run besides. A no-op (no count, no scan)
-    on any other table."""
-    if not table.unknown_member or not table.business_key:
+    - `unknown_member` table (any strategy): a row with a NULL in ANY key
+      column. NULL is the unknown member's key for a string column, so such
+      a row would be indistinguishable from it in a null-safe fact join.
+    - `scd1`/`scd2` table without it: a single-column key that is NULL, or a
+      composite key whose columns are ALL NULL. A NULL in just one component
+      of a composite key is a value: the merge matches it null-safely, so
+      the same key hits the same row in every batch.
+    - `replace`/`append` without it: nothing - a NULL key is data there.
+
+    A no-op (no count, no scan) when the table has nothing to drop."""
+    if not table.business_key:
         return source, 0
-    any_null = reduce(operator.or_, [F.col(k).isNull() for k in table.business_key])
-    dropped = source.filter(any_null).count()
+    nulls = [F.col(k).isNull() for k in table.business_key]
+    if table.unknown_member:
+        drop = reduce(operator.or_, nulls)
+        reason = "NULL is reserved for the unknown member on an unknown_member table"
+    elif table.strategy in ("scd1", "scd2"):
+        drop = reduce(operator.and_, nulls)
+        reason = "a NULL business key cannot identify a row"
+    else:
+        return source, 0
+    dropped = source.filter(drop).count()
     if dropped == 0:
         return source, 0
     _logger.warning(
-        "%s: dropped %d source row(s) with a NULL business key (%s) - NULL is "
-        "reserved for the unknown member on an unknown_member table",
+        "%s: dropped %d source row(s) with a NULL business key (%s) - %s",
         table.fqn,
         dropped,
         ", ".join(table.business_key),
+        reason,
     )
-    return source.filter(~any_null), dropped
+    return source.filter(~drop), dropped
 
 
 def _is_unknown_member(table: Table, schema: StructType, sentinels: dict[str, Any]) -> Column:
@@ -588,7 +601,7 @@ def _prepare_source(df: DataFrame, table: Table) -> DataFrame:
 
 
 def _key_condition(table: Table) -> str:
-    return " AND ".join(f"target.{k} = source.{k}" for k in table.business_key)
+    return " AND ".join(f"target.{k} <=> source.{k}" for k in table.business_key)
 
 
 def _comparable_columns(
@@ -663,7 +676,7 @@ def _rows_that_changed(
     """Source rows whose business columns differ from their current target
     row - used to decide which keys need a new scd2 version opened."""
     compare_cols = _comparable_columns(columns, table, existing_columns)
-    join_cond = [source_df[k] == current_df[k] for k in table.business_key]
+    join_cond = [source_df[k].eqNullSafe(current_df[k]) for k in table.business_key]
     joined = source_df.join(current_df, join_cond, "inner")
 
     if not compare_cols:
