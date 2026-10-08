@@ -21,8 +21,20 @@ the model or the harness:
 A seed that no subset of the quirk flags explains is printed as UNEXPLAINED: that is a
 NEW deviation (add a `DEVIATIONS` entry, a quirk flag and a repro, then regenerate).
 
-NULL keys on replace/append were never a deviation: the NULL-key drop applies
-to scd1/scd2 only (an earlier model was wrong, not pipetree).
+The lists are EMPTY today: every deviation is fixed and every generated history of the
+four strategies conforms to the reference model. NULL keys on replace/append were never a
+deviation: the NULL-key drop applies to scd1/scd2 only (an earlier model was wrong, not
+pipetree).
+
+To add a new deviation (a seed that diverges and that no pipetree fix is planned
+for yet, or one regen prints as UNEXPLAINED):
+  1. add `DEVIATIONS["Fn"]` (what is wrong, which rule it violates);
+  2. add the flag to `quirks.FLAGS` and teach `QuirkModel` the deviation (cite
+     the pipetree code that causes it); list the invariants it breaks in
+     `quirks._TOLERATES`;
+  3. add a minimal reproduction to `HAND_REPROS["Fn"]`;
+  4. run regen with `--write`. When the deviation is fixed, undo all of this and
+     turn the repro into a passing SMOKE case in `test_conformance.py`.
 """
 
 from __future__ import annotations
@@ -58,39 +70,10 @@ def _seeds(strategy: str, seeds: str) -> list[tuple[str, int]]:
     return [(strategy, int(s)) for s in seeds.split()]
 
 
-DEVIATIONS: dict[str, str] = {
-    "null-key-kept": "a NULL business key on an scd1/scd2 table without "
-    "unknown_member is not dropped (no null_keys_dropped); it "
-    "never matches, so it is re-inserted on every run",
-    "composite-null-key": "a composite key with a NULL in one component is matched with"
-    " `=` (not null-safe), so the row is re-inserted on every run",
-}
+DEVIATIONS: dict[str, str] = {}
 
 # BEGIN GENERATED (tests.merge_conformance.regen) - do not edit by hand
-_LISTS: dict[str, list[tuple[str, int]]] = {
-    "null-key-kept": _seeds(
-        "scd1",
-        "0 1 4 10 11 20 24 28 45 48 49 56 62 64 67 68 69 73 82 83 85 87 88 100 103 "
-        "105 110 113 117 121 125 126 132 135 139 141 148 149 151 152 154 156 160 162 "
-        "165 170 173 180 181 197 200 206 207 215 219 221 227 230 231 238 242 244 247 "
-        "253 280 281 284 294 ",
-    )
-    + _seeds(
-        "scd2",
-        "1 9 11 14 26 30 32 36 37 41 53 58 64 68 73 74 79 80 83 86 88 96 103 106 110 "
-        "120 124 126 127 129 137 138 142 147 150 151 159 162 165 171 172 185 194 202 "
-        "208 210 212 213 216 217 220 226 227 228 230 232 233 235 245 252 256 267 271 "
-        "273 283 285 287 297 ",
-    ),
-    "composite-null-key": _seeds(
-        "scd1",
-        "254 ",
-    )
-    + _seeds(
-        "scd2",
-        "45 86 106 150 151 238 249 264 296 ",
-    ),
-}
+_LISTS: dict[str, list[tuple[str, int]]] = {}
 # END GENERATED
 
 KNOWN_DIVERGENCES: dict[str, tuple[str, list[tuple[str, int]]]] = {
@@ -99,13 +82,7 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, list[tuple[str, int]]]] = {
 
 # Hand-minimised reproductions, keyed "<deviation id>[-<variant>]" (run by
 # test_deviation_minimal_repro).
-HAND_REPROS: dict[str, Case] = {
-    "null-key-kept": _case("scd1", [[_r(_id(None))], [_r(_id(None))]]),
-    "null-key-kept-scd2": _case("scd2", [[_r(_id(None))], [_r(_id(None))]]),
-    "composite-null-key": _case(
-        "scd1", [[_r({"a": None, "b": 1})], [_r({"a": None, "b": 1})]], key=("a", "b")
-    ),
-}
+HAND_REPROS: dict[str, Case] = {}
 
 
 def deviations_for(strategy: str, seed: int) -> list[str]:

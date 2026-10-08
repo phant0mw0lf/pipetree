@@ -118,10 +118,15 @@ def _row(id, v="a", *, w=None, seq=None, op="U", **extra):
     return {"id": id, "v": v, "w": w, "seq": seq, "op": op, **extra}
 
 
-def _case(strategy, batches, *, inits=(), extra=(), **kw):
+def _kr(a, b, v="a"):
+    return {"a": a, "b": b, "v": v, "w": None, "seq": None, "op": "U"}
+
+
+def _case(strategy, batches, *, inits=(), extra=(), key=("id",), **kw):
     has_delete = kw.get("has_delete", False)
     kw.setdefault("sequence_by", ("seq",))
-    table = ModelTable(strategy=strategy, key=("id",), columns=COLS + extra, **kw)
+    columns = (COLS if key == ("id",) else (*key, "v", "w", "seq", "op")) + extra
+    table = ModelTable(strategy=strategy, key=key, columns=columns, **kw)
     return Case(
         seed=-1,
         table=table,
@@ -213,6 +218,37 @@ SMOKE: dict[str, tuple[Case, list[str]]] = {
         ),
         [],
     ),
+    # NULL business keys, hand-minimised (were null-key-kept/composite-null-key): a whole-NULL
+    # single key is dropped, never
+    # piles up
+    "scd1-null-key-dropped": (_case("scd1", [[_row(None)], [_row(None), _row(1)]]), []),
+    "scd2-null-key-dropped": (_case("scd2", [[_row(None)], [_row(None), _row(1)]]), []),
+    # a NULL in ONE component of a composite key is a value, matched null-safely
+    "scd1-partial-null-key-matches": (
+        _case(
+            "scd1",
+            [[_kr(None, 1)], [_kr(None, 1)], [_kr(None, 1, "b")], [_kr(None, 1, "b")]],
+            key=("a", "b"),
+        ),
+        [],
+    ),
+    "scd2-partial-null-key-matches": (
+        _case(
+            "scd2",
+            [[_kr(None, 1)], [_kr(None, 1)], [_kr(None, 1, "b")], [_kr(None, 1, "b")]],
+            key=("a", "b"),
+        ),
+        [],
+    ),
+    # ... while a composite key that is NULL in every component is dropped
+    "scd1-all-null-composite-key-dropped": (
+        _case(
+            "scd1",
+            [[_kr(5, 1), _kr(None, None), _kr(5, None)], [_kr(5, 1), _kr(None, None)]],
+            key=("a", "b"),
+        ),
+        [],
+    ),
     # change, delete, return (a returning scd2 key opens a new version: a new current version)
     "scd2": (
         _case(
@@ -275,17 +311,28 @@ def test_harness_reports_a_wrong_stat(spark, monkeypatch):
     assert divergences[0].batch_index == 0
 
 
-def test_attribution_mode_reports_independent_later_divergences(spark):
-    # null-key-kept at batch 1 (NULL business key kept) and again at batch 2 (re-inserted).
-    case = _case("scd1", [[_row(1)], [_row(None)], [_row(None)]], sequence_by=())
+def test_attribution_mode_reports_independent_later_divergences(spark, monkeypatch):
+    # A model that is wrong from the second batch on: the default run stops at the first
+    # divergence, attribution mode resyncs to the table and reports the later one too.
+    def wrong_from_batch_1(table, state, batch, execution_id, *, init=False):
+        new_state, stats = apply_batch(table, state, batch, execution_id, init=init)
+        if execution_id >= 2:
+            for row in new_state:
+                row["v"] = "WRONG"
+        return new_state, stats
+
+    monkeypatch.setattr(merge_harness, "apply_batch", wrong_from_batch_1)
+    case = _case("scd1", [[_row(1)], [_row(2)], [_row(3)]], sequence_by=())
+
     first_only = run_case(spark, case)
     assert {d.batch_index for d in first_only} == {1}
 
     every = run_case(spark, case, attribution=True)
-    by_batch = {d.batch_index: d for d in every if d.kind == "rows"}
-    assert sorted(by_batch) == [1, 2]
-    assert "'id': None" in by_batch[1].detail  # table: the NULL-key row was written
-    assert "'id': None" in by_batch[2].detail  # table: and written once more
+    assert sorted({d.batch_index for d in every if d.kind == "rows"}) == [1, 2]
 
-    assert run_case(spark, case, model=QuirkModel({"null-key-kept"}), attribution=True) == []
-    assert run_case(spark, case, model=QuirkModel({"composite-null-key"}), attribution=True) != []
+
+def test_an_empty_quirk_model_is_the_reference_model_and_unknown_flags_are_rejected(spark):
+    case = SMOKE["scd2"][0]
+    assert run_case(spark, case, model=QuirkModel(), attribution=True) == []
+    with pytest.raises(ValueError, match="unknown quirk flags"):
+        QuirkModel({"null-key-kept"})
