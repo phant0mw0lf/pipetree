@@ -242,6 +242,20 @@ def test_scd1_revived_row_keeps_its_surrogate_key_and_inserted_at(spark):
     assert spark.table(table.fqn).count() == 2
 
 
+def test_scd1_deleting_an_already_soft_deleted_row_is_a_no_op(spark):
+    table = _soft_table("redelete")
+    _soft_run(spark, table, [(1, "Alice", False)], 1)
+    _soft_run(spark, table, [(1, "Alice", True)], 2)
+    first = rows(spark.table(table.fqn))[1]
+
+    _soft_run(spark, table, [(1, "Alice", True)], 3)
+
+    second = rows(spark.table(table.fqn))[1]
+    assert second == first
+    assert second["_is_deleted"] is True
+    assert second["_execution_id"] == 2
+
+
 def test_scd1_deleting_a_live_row_soft_deletes_and_bumps_the_audit_columns(spark):
     table = _soft_table("delete_live")
     _soft_run(spark, table, [(1, "Alice", False)], 1)

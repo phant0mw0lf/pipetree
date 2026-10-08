@@ -184,7 +184,9 @@ def merge_scd1(
             "_is_deleted": F.lit(True),
         }
         merge_builder = merge_builder.whenMatchedUpdate(
-            condition=f"source.{_IS_DELETE_COL} = true", set=soft_delete_values
+            # Deleting an already soft-deleted row is a no-op (re-runs are safe).
+            condition=f"source.{_IS_DELETE_COL} = true AND target._is_deleted = false",
+            set=soft_delete_values,
         )
     elif table.merge.delete_mode == "hard":
         merge_builder = merge_builder.whenMatchedDelete(condition=f"source.{_IS_DELETE_COL} = true")
