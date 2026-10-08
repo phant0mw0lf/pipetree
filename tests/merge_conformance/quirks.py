@@ -1,10 +1,10 @@
 """`QuirkModel`: the reference model with one switch per KNOWN pipetree deviation
 (the deviations in `known_divergences.py`), used to ATTRIBUTE divergences.
 
-`run_case(spark, case, model=QuirkModel({"null-key-kept", "ignore-mode-delete-rows"}))` compares the
+`run_case(spark, case, model=QuirkModel({"null-key-kept", "ignored-column-stale"}))` compares the
 real
-table with "the model as if today's quirks null-key-kept and ignore-mode-delete-rows were the
-rules". A seed
+table with "the model as if today's quirks null-key-kept and ignored-column-stale were the rules". A
+seed
 listed under deviations S must match `QuirkModel(S)` over its whole history, and
 every flag in S must matter; otherwise the divergence is unexplained.
 
@@ -40,9 +40,6 @@ FLAGS: dict[str, str] = {
     # merge.py:558 `_key_condition`: `target.k = source.k` is not null-safe, so a
     # composite key with one NULL component never matches.
     "composite-null-key": "composite key with a NULL component never matches",
-    # merge.py:552 `_prepare_source`: delete_mode ignore marks no row as a delete, and
-    # merge.py:152/214 `dedupe_for_merge` runs before, so delete rows are upserts.
-    "ignore-mode-delete-rows": "delete_mode ignore treats delete rows as upserts",
     # merge.py:565 `_comparable_columns` drops ignore_columns from change detection
     # and nothing else writes them: a change in ignored columns alone is lost.
     "ignored-column-stale": "ignore_columns change alone not written",
@@ -105,11 +102,11 @@ class QuirkModel:
         ignore_mode = table.has_delete and table.delete_mode == "ignore"
 
         def is_del(r: dict) -> bool:
-            return _is_delete(table, r) and not (ignore_mode and "ignore-mode-delete-rows" in q)
+            return _is_delete(table, r)
 
         dups = None
         if scd:
-            if ignore_mode and "ignore-mode-delete-rows" not in q:
+            if ignore_mode:
                 rows = [r for r in rows if r["op"] != "D"]
             groups: dict[tuple, list[dict]] = {}
             for r in rows:

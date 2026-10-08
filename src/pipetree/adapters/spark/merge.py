@@ -149,7 +149,7 @@ def merge_scd1(
     _ensure_schema(spark, table.fqn)
     _reject_source_surrogate_key(source, table)
     now = timestamp_bigint()
-    deduped, duplicates_dropped = dedupe_for_merge(source, table)
+    deduped, duplicates_dropped = dedupe_for_merge(_without_ignored_deletes(source, table), table)
 
     # init is a full reload: seed from scratch even if the table exists.
     if init or not _table_exists(spark, table.fqn):
@@ -219,7 +219,7 @@ def merge_scd2(
     _ensure_schema(spark, table.fqn)
     _reject_source_surrogate_key(source, table)
     now = timestamp_bigint()
-    deduped, duplicates_dropped = dedupe_for_merge(source, table)
+    deduped, duplicates_dropped = dedupe_for_merge(_without_ignored_deletes(source, table), table)
 
     # init is a full reload: seed from scratch (a fresh version-1 history)
     # even if the table already exists.
@@ -554,6 +554,15 @@ def _column_mapping(
     audit columns - built as one literal so the merged dict's value type is
     `str | Column` throughout, matching what Delta's merge builder expects."""
     return {**{c: f"source.{c}" for c in source_columns}, **audit_values}
+
+
+def _without_ignored_deletes(df: DataFrame, table: Table) -> DataFrame:
+    """`delete_mode: ignore` drops the source's delete signal entirely: delete rows
+    are removed before the duplicate resolution, as if they were not in the batch.
+    A NULL `delete_when` result is not a delete (the row stays), as in `_prepare_source`."""
+    if table.merge.delete_mode != "ignore" or not table.merge.delete_when:
+        return df
+    return df.filter(~F.coalesce(F.expr(table.merge.delete_when), F.lit(False)))
 
 
 def _prepare_source(df: DataFrame, table: Table) -> DataFrame:
