@@ -64,9 +64,6 @@ DEVIATIONS: dict[str, str] = {
     "never matches, so it is re-inserted on every run",
     "composite-null-key": "a composite key with a NULL in one component is matched with"
     " `=` (not null-safe), so the row is re-inserted on every run",
-    "ignore-mode-delete-rows": "delete_mode ignore treats delete rows as ordinary upserts "
-    "(written, winning the dedupe by sequence, counted as "
-    "duplicates) instead of removing them before the dedupe",
     "ignored-column-stale": "a change in an ignore_columns column alone is not written "
     "(scd1 and scd2)",
 }
@@ -93,20 +90,7 @@ _LISTS: dict[str, list[tuple[str, int]]] = {
     )
     + _seeds(
         "scd2",
-        "45 86 106 150 151 229 238 249 264 296 ",
-    ),
-    "ignore-mode-delete-rows": _seeds(
-        "scd1",
-        "5 6 8 9 12 20 25 28 29 33 34 35 38 39 41 42 49 73 77 88 93 97 101 113 118 "
-        "119 120 123 131 141 153 170 171 172 175 177 180 193 194 218 220 225 234 236 "
-        "242 243 244 256 273 280 282 288 289 295 297 ",
-    )
-    + _seeds(
-        "scd2",
-        "3 6 8 9 16 26 28 33 38 41 44 58 62 63 72 75 77 80 83 84 88 91 92 93 95 96 "
-        "101 110 112 113 115 120 124 128 133 136 143 153 154 161 166 168 172 174 175 "
-        "183 188 189 191 203 209 210 211 215 221 222 224 225 228 229 231 235 238 239 "
-        "246 248 252 254 257 261 264 272 276 284 288 290 296 298 ",
+        "45 86 106 150 151 238 249 264 296 ",
     ),
     "ignored-column-stale": _seeds(
         "scd1",
@@ -114,7 +98,7 @@ _LISTS: dict[str, list[tuple[str, int]]] = {
     )
     + _seeds(
         "scd2",
-        "14 25 27 29 44 73 78 89 105 124 193 195 210 217 293 ",
+        "14 25 27 29 44 73 78 89 105 124 193 195 217 293 ",
     ),
 }
 # END GENERATED
@@ -130,16 +114,6 @@ HAND_REPROS: dict[str, Case] = {
     "null-key-kept-scd2": _case("scd2", [[_r(_id(None))], [_r(_id(None))]]),
     "composite-null-key": _case(
         "scd1", [[_r({"a": None, "b": 1})], [_r({"a": None, "b": 1})]], key=("a", "b")
-    ),
-    "ignore-mode-delete-rows": _case(
-        "scd1", [[_r(_id(1), op="D")]], has_delete=True, delete_mode="ignore"
-    ),
-    "ignore-mode-delete-rows-scd2-dedupe": _case(
-        "scd2",
-        [[_r(_id(1), seq=1)], [_r(_id(1), "b", seq=3, op="D"), _r(_id(1), "c", seq=2)]],
-        sequence_by=("seq",),
-        has_delete=True,
-        delete_mode="ignore",
     ),
     "ignored-column-stale-scd2": _case(
         "scd2",
@@ -161,5 +135,5 @@ def deviations_for(strategy: str, seed: int) -> list[str]:
 
 
 def deviation_of(repro_id: str) -> str:
-    """`"ignore-mode-delete-rows-scd2-dedupe"` -> `"ignore-mode-delete-rows"`."""
+    """`"ignored-column-stale-scd2"` -> `"ignored-column-stale"`."""
     return max((f for f in DEVIATIONS if repro_id == f or repro_id.startswith(f + "-")), key=len)

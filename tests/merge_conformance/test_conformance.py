@@ -179,6 +179,20 @@ SMOKE: dict[str, tuple[Case, list[str]]] = {
         _case("scd1", [[_row(1)], [_row(1, op="D")], [_row(1, op="D")]], has_delete=True),
         [],
     ),
+    # delete_mode ignore, hand-minimised: delete_mode ignore removes delete rows before dedupe
+    "scd1-ignore-delete-only": (
+        _case("scd1", [[_row(1, op="D")]], has_delete=True, delete_mode="ignore"),
+        [],
+    ),
+    "scd2-ignore-delete-wins-sequence": (
+        _case(
+            "scd2",
+            [[_row(1, seq=1)], [_row(1, "b", seq=3, op="D"), _row(1, "c", seq=2)]],
+            has_delete=True,
+            delete_mode="ignore",
+        ),
+        [],
+    ),
     # change, delete, return (a returning scd2 key opens a new version: a new current version)
     "scd2": (
         _case(
@@ -242,30 +256,30 @@ def test_harness_reports_a_wrong_stat(spark, monkeypatch):
 
 
 def test_attribution_mode_reports_independent_later_divergences(spark):
-    # ignored-column-stale at batch 1 (ignored column alone), ignore-mode-delete-rows at batch 2
-    # (ignore-mode delete row).
+    # ignored-column-stale at batch 1 (ignored column alone), null-key-kept at batch 2 (NULL
+    # business key kept).
     case = _case(
         "scd1",
-        [[_row(1, seen=0)], [_row(1, seen=1)], [_row(2, op="D", seen=0)]],
+        [[_row(1, seen=0)], [_row(1, seen=1)], [_row(None, seen=0)]],
         extra=("seen",),
         ignore=("seen",),
-        has_delete=True,
-        delete_mode="ignore",
         sequence_by=(),
     )
     first_only = run_case(spark, case)
     assert {d.batch_index for d in first_only} == {1}
 
     every = run_case(spark, case, attribution=True)
-    assert [(d.batch_index, d.kind) for d in every] == [(1, "rows"), (2, "rows")]
-    assert "'seen': 1" in every[0].detail  # model: the ignored column is updated
-    assert "'op': 'D'" in every[1].detail  # table: the delete row was written
+    # (the NULL key also breaks the identity invariant in batch 2: only rows are checked here)
+    by_batch = {d.batch_index: d for d in every if d.kind == "rows"}
+    assert sorted(by_batch) == [1, 2]
+    assert "'seen': 1" in by_batch[1].detail  # model: the ignored column is updated
+    assert "'id': None" in by_batch[2].detail  # table: the NULL-key row was written
 
     assert (
         run_case(
             spark,
             case,
-            model=QuirkModel({"ignore-mode-delete-rows", "ignored-column-stale"}),
+            model=QuirkModel({"null-key-kept", "ignored-column-stale"}),
             attribution=True,
         )
         == []
