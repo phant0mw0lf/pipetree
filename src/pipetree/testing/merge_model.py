@@ -8,7 +8,8 @@ carries no meaning except scd2 version order within a key, so a harness must
 compare in a canonical order. NaN is not supported (Python ``!=`` differs from
 Spark null-safe equality).
 
-Order of operations in ``apply_batch``: (1) the NULL-key drop (a NULL-key delete
+Order of operations in ``apply_batch``: (1) the NULL-key drop (scd1/scd2, and
+unknown_member tables of every strategy; a NULL-key delete
 row is counted in ``null_keys_dropped``), (2) the ``delete_mode: ignore`` filter
 removing delete rows, (3) dedupe. ``duplicates_dropped`` counts after (1) and (2).
 
@@ -101,8 +102,13 @@ def apply_batch(
     # Null-key rule (NULL business keys).
     keys = table.key
     if table.unknown_member:
-        # NULL business keys: unknown_member tables drop a row with a NULL in ANY key column
+        # NULL business keys: unknown_member tables (every strategy) drop a row with a NULL in
+        # ANY key column - NULL is the unknown member's string key
         kept = [r for r in rows if all(r[c] is not None for c in keys)]
+    elif table.strategy in ("replace", "append"):
+        # NULL business keys: the drop is for scd1/scd2 only, where the key drives the
+        # merge; replace/append keep every row as it comes (a NULL key is data)
+        kept = rows
     elif len(keys) == 1:
         # NULL business keys: single-column key NULL -> dropped
         kept = [r for r in rows if r[keys[0]] is not None]

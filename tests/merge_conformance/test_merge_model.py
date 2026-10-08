@@ -6,6 +6,7 @@ import pytest
 
 from pipetree.testing.merge_model import (
     AmbiguousDedupe,
+    BatchStats,
     ModelTable,
     apply_batch,
     is_unknown_member,
@@ -30,18 +31,20 @@ def B(*rows):
     return out
 
 
-def R(id, v=None, *, w=None, seq=None, op="U", e=1, d=False, cur=None):
+def R(id, v=None, *, w=None, seq=None, op: str | None = "U", e=1, d=False, cur=None):
     row = {"id": id, "v": v, "w": w, "seq": seq, "op": op, "_is_deleted": d, "_execution_id": e}
     if cur is not None:
         row["_is_current"] = cur
     return row
 
 
-def run(table, *batches):
+def run(table, *batches) -> tuple[list[dict], BatchStats]:
     """Apply batches 1..n in order; return (state, stats of the last batch)."""
-    state, stats = [], None
+    state: list[dict] = []
+    stats: BatchStats | None = None
     for n, batch in enumerate(batches, start=1):
         state, stats = apply_batch(table, state, batch, n)
+    assert stats is not None, "run() needs at least one batch"
     return state, stats
 
 
@@ -346,6 +349,29 @@ def test_composite_key_all_null_row_is_dropped():
     state, stats = run(t, B({"id": None, "v": None, "w": "p"}, {"id": 1, "v": None}))
     assert state == [R(1, None, e=1)]
     assert stats.null_keys_dropped == 1
+
+
+def test_replace_and_append_keep_null_key_rows():
+    # NULL business keys (user, 2026-10-07): the NULL-key drop applies to scd1/scd2 only, where
+    # the key drives the merge; replace/append keep every row as it comes.
+    for strategy in ("replace", "append"):
+        t = T(strategy)
+        state, stats = run(t, B({"id": None, "v": "a"}, {"id": 1, "v": "b"}))
+        assert state == [R(None, "a", e=1), R(1, "b", e=1)], strategy
+        assert stats.null_keys_dropped == 0
+        tc = T(strategy, key=("id", "v"))
+        state, stats = run(tc, B({"id": None, "v": None, "w": "p"}))
+        assert state == [R(None, None, w="p", e=1)], strategy
+        assert stats.null_keys_dropped == 0
+
+
+def test_unknown_member_replace_and_append_still_drop_any_null_key_column():
+    # NULL business keys: unknown_member tables drop on every strategy (NULL is the member's key)
+    for strategy in ("replace", "append"):
+        t = T(strategy, unknown_member=True, sentinels={"id": -1})
+        state, stats = run(t, B({"id": None, "v": "a"}, {"id": 1, "v": "b"}))
+        assert stats.null_keys_dropped == 1, strategy
+        assert [r["id"] for r in state] == [1, -1], strategy
 
 
 def test_unknown_member_table_drops_a_row_with_any_null_key_column():
