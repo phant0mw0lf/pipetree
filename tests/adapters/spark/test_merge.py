@@ -134,30 +134,6 @@ def test_scd1_does_not_touch_updated_at_when_nothing_changed(spark):
     assert written["_execution_id"] == 1  # untouched: still stamped by the original run
 
 
-def test_scd1_ignore_columns_are_excluded_from_change_detection(spark):
-    table = make_table("customer4", "scd1", merge={"ignore_columns": ["last_seen_at"]})
-    merge_scd1(
-        spark,
-        table,
-        spark.createDataFrame([(1, "Alice", 100)], ["id", "name", "last_seen_at"]),
-        1,
-        "crm",
-    )
-
-    # only last_seen_at changed - ignored, so no update should happen
-    merge_scd1(
-        spark,
-        table,
-        spark.createDataFrame([(1, "Alice", 200)], ["id", "name", "last_seen_at"]),
-        2,
-        "crm",
-    )
-
-    written = rows(spark.table(table.fqn))[1]
-    assert written["_execution_id"] == 1
-    assert written["last_seen_at"] == 100
-
-
 def test_scd1_soft_delete_marks_is_deleted_and_keeps_the_row(spark):
     table = make_table(
         "customer5",
@@ -932,3 +908,178 @@ def test_hard_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
     else:
         # scd2 hard delete: the history is kept, closed
         assert [(r[0], r[4]) for r in _snapshot(spark, table)] == [(1, False)]
+
+
+# ------------------------------------------------- ignore_columns (ignore_columns alone update in
+# place)
+
+
+def _seen_table(name: str, strategy: str, **merge: Any) -> Table:
+    return make_table(name, strategy, merge={"ignore_columns": ["seen"], **merge})
+
+
+def _seen_df(spark, *data):
+    return spark.createDataFrame(list(data), "id int, name string, seen int")
+
+
+def _run(spark, strategy, table, execution_id, *data):
+    merge = merge_scd1 if strategy == "scd1" else merge_scd2
+    merge(spark, table, _seen_df(spark, *data), execution_id, "crm")
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignored_column_alone_is_updated_in_place_without_a_bump(spark, strategy):
+    table = _seen_table(f"ign_alone_{strategy}", strategy)
+    _run(spark, strategy, table, 1, (1, "Alice", 100), (2, "Bob", 5))
+    before = rows(spark.table(table.fqn))
+
+    _run(spark, strategy, table, 2, (1, "Alice", 200), (2, "Bob", 5))
+
+    after = spark.table(table.fqn).collect()
+    assert len(after) == 2  # no new scd2 version
+    by_id = {r["id"]: r.asDict() for r in after}
+    assert by_id[1]["seen"] == 200
+    assert by_id[1]["name"] == "Alice"
+    assert by_id[1]["_execution_id"] == 1
+    assert by_id[1]["_updated_at"] == before[1]["_updated_at"]
+    assert by_id[2] == before[2]  # untouched row stays identical
+    if strategy == "scd2":
+        assert by_id[1]["_is_current"] is True
+        assert by_id[1]["_valid_to"] is None
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignored_column_unchanged_leaves_the_table_untouched(spark, strategy):
+    table = _seen_table(f"ign_idem_{strategy}", strategy)
+    _run(spark, strategy, table, 1, (1, "Alice", 100))
+    before = [r.asDict() for r in spark.table(table.fqn).collect()]
+
+    _run(spark, strategy, table, 2, (1, "Alice", 100))
+
+    assert [r.asDict() for r in spark.table(table.fqn).collect()] == before
+
+
+def test_scd1_tracked_and_ignored_change_updates_everything_and_bumps(spark):
+    table = _seen_table("ign_both_scd1", "scd1")
+    _run(spark, "scd1", table, 1, (1, "Alice", 100))
+
+    _run(spark, "scd1", table, 2, (1, "Alicia", 200))
+
+    row = rows(spark.table(table.fqn))[1]
+    assert (row["name"], row["seen"], row["_execution_id"]) == ("Alicia", 200, 2)
+
+
+def test_scd2_tracked_and_ignored_change_opens_a_version_with_the_new_value(spark):
+    table = _seen_table("ign_both_scd2", "scd2")
+    _run(spark, "scd2", table, 1, (1, "Alice", 100))
+
+    _run(spark, "scd2", table, 2, (1, "Alicia", 200))
+
+    all_rows = spark.table(table.fqn).collect()
+    closed = [r for r in all_rows if not r["_is_current"]]
+    current = [r for r in all_rows if r["_is_current"]]
+    assert len(all_rows) == 2
+    assert (closed[0]["name"], closed[0]["seen"]) == ("Alice", 100)  # OLD ignored value
+    assert (current[0]["name"], current[0]["seen"], current[0]["_execution_id"]) == (
+        "Alicia",
+        200,
+        2,
+    )
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignored_column_changing_to_and_from_null(spark, strategy):
+    table = _seen_table(f"ignored_to_null_{strategy}", strategy)
+    _run(spark, strategy, table, 1, (1, "Alice", 100))
+
+    _run(spark, strategy, table, 2, (1, "Alice", None))
+    row = spark.table(table.fqn).collect()
+    assert len(row) == 1 and row[0]["seen"] is None and row[0]["_execution_id"] == 1
+
+    _run(spark, strategy, table, 3, (1, "Alice", 7))
+    row = spark.table(table.fqn).collect()
+    assert len(row) == 1 and row[0]["seen"] == 7 and row[0]["_execution_id"] == 1
+
+
+def test_scd2_in_place_update_never_modifies_a_closed_version(spark):
+    table = _seen_table("ign_closed_scd2", "scd2")
+    _run(spark, "scd2", table, 1, (1, "Alice", 100))
+    _run(spark, "scd2", table, 2, (1, "Alicia", 200))
+
+    _run(spark, "scd2", table, 3, (1, "Alicia", 300))
+
+    all_rows = spark.table(table.fqn).collect()
+    closed = [r for r in all_rows if not r["_is_current"]]
+    current = [r for r in all_rows if r["_is_current"]]
+    assert len(all_rows) == 2
+    assert (closed[0]["name"], closed[0]["seen"]) == ("Alice", 100)
+    assert (current[0]["seen"], current[0]["_execution_id"]) == (300, 2)
+
+
+def test_scd1_revived_row_takes_all_columns_and_bumps(spark):
+    table = _seen_table("ign_revive_scd1", "scd1", delete_when="name = 'gone'")
+    _run(spark, "scd1", table, 1, (1, "Alice", 100))
+    _run(spark, "scd1", table, 2, (1, "gone", 100))
+
+    _run(spark, "scd1", table, 3, (1, "Alice", 300))
+
+    row = rows(spark.table(table.fqn))[1]
+    assert (row["_is_deleted"], row["seen"], row["_execution_id"]) == (False, 300, 3)
+
+
+def test_scd1_delete_row_does_not_write_ignored_columns_into_a_soft_deleted_row(spark):
+    table = _seen_table("ign_deleted_scd1", "scd1", delete_when="name = 'gone'")
+    _run(spark, "scd1", table, 1, (1, "Alice", 100))
+    _run(spark, "scd1", table, 2, (1, "gone", 100))
+
+    _run(spark, "scd1", table, 3, (1, "gone", 999))
+
+    row = rows(spark.table(table.fqn))[1]
+    assert (row["_is_deleted"], row["seen"], row["_execution_id"]) == (True, 100, 2)
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignored_column_added_by_schema_evolution_does_not_count_as_a_change(spark, strategy):
+    table = make_table(f"ign_evolve_{strategy}", strategy, merge={"ignore_columns": ["seen"]})
+    merge = merge_scd1 if strategy == "scd1" else merge_scd2
+    merge(spark, table, spark.createDataFrame([(1, "Alice")], "id int, name string"), 1, "crm")
+
+    merge(spark, table, _seen_df(spark, (1, "Alice", 5)), 2, "crm")
+
+    all_rows = spark.table(table.fqn).collect()
+    assert len(all_rows) == 1
+    assert all_rows[0]["seen"] is None  # no old value to compare: not a change
+    assert all_rows[0]["_execution_id"] == 1
+
+    merge(spark, table, _seen_df(spark, (1, "Alice", 6)), 3, "crm")
+    all_rows = spark.table(table.fqn).collect()
+    assert len(all_rows) == 1
+    assert all_rows[0]["seen"] == 6 and all_rows[0]["_execution_id"] == 1
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_no_tracked_columns_an_ignored_change_is_in_place_and_nothing_else_is_a_change(
+    spark, strategy
+):
+    table = make_table(f"ign_degenerate_{strategy}", strategy, merge={"ignore_columns": ["seen"]})
+    merge = merge_scd1 if strategy == "scd1" else merge_scd2
+    merge(spark, table, spark.createDataFrame([(1, 100)], "id int, seen int"), 1, "crm")
+
+    merge(spark, table, spark.createDataFrame([(1, 100)], "id int, seen int"), 2, "crm")
+    only = spark.table(table.fqn).collect()
+    assert len(only) == 1 and only[0]["_execution_id"] == 1  # idempotent
+
+    merge(spark, table, spark.createDataFrame([(1, 200)], "id int, seen int"), 3, "crm")
+    only = spark.table(table.fqn).collect()
+    assert len(only) == 1
+    assert (only[0]["seen"], only[0]["_execution_id"]) == (200, 1)
+
+
+def test_scd1_without_ignore_columns_still_bumps_on_any_change(spark):
+    table = make_table("ign_none_scd1", "scd1")
+    merge_scd1(spark, table, _seen_df(spark, (1, "Alice", 100)), 1, "crm")
+
+    merge_scd1(spark, table, _seen_df(spark, (1, "Alice", 200)), 2, "crm")
+
+    row = rows(spark.table(table.fqn))[1]
+    assert (row["seen"], row["_execution_id"]) == (200, 2)
