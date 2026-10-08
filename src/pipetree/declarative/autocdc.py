@@ -9,18 +9,29 @@ pipetree has nothing to execute here, only something to compile to. Only
 `scd1`/`scd2` tables translate; `replace`/`append` need no CDC apparatus
 at all, just a plain streaming table or materialized view.
 
-**The exact current Python API (`dlt.create_auto_cdc_flow`, formerly
-`dlt.apply_changes`) isn't verified here** - Databricks renamed this once
-already, and the parameter names may have moved again since. The SQL this
-renders is checked directly against part 1's own worked example and
-Databricks' documented AUTO CDC grammar, the more stable target.
+The SQL rendered for scd1 and scd2 (including `TRACK HISTORY ON * EXCEPT`)
+was accepted and executed by a Databricks serverless Lakeflow Declarative
+Pipeline on 2026-10-08. The flow reads `FROM STREAM <source>` (a plain
+`FROM <source>` is rejected: the source must be a streaming query), and
+every statement ends with a semicolon so rendered tables can be
+concatenated into one pipeline file.
 
-`delete_mode` (soft/hard/ignore) has no AUTO CDC equivalent modeled here
-beyond `ignore` dropping the delete signal entirely (the same rule the
-Spark adapter uses) - AUTO CDC's own delete behavior differs by
-`stored_as_scd_type` and isn't a further per-mode choice the way
-pipetree's soft/hard/ignore is; check it against current Databricks docs
-before relying on the two lining up.
+Still unverified: the Python API name `dlt.create_auto_cdc_flow` (Databricks
+renamed it once already). `delete_mode` is not modeled beyond `ignore`
+dropping the delete signal entirely; AUTO CDC's own delete behavior differs
+by `stored_as_scd_type`, so check it against current Databricks docs.
+
+AUTO CDC semantics differ from pipetree's merge:
+
+- scd2 history columns are `__START_AT`/`__END_AT`, carrying the SEQUENCE BY
+  values; there are no `_valid_from/_valid_to/_is_current` and no audit
+  columns.
+- Duplicates of one key inside one micro-batch each become history versions
+  (pipetree reduces them to one first).
+- A row with an older sequence that arrives in the same micro-batch is
+  inserted as an earlier history version.
+- How AUTO CDC treats a row whose sequence is older than the stored one in a
+  LATER batch is not verified here (pipetree's rule: the last batch wins).
 """
 
 from __future__ import annotations
@@ -85,8 +96,7 @@ def render_sql(flow: AutoCdcFlow, *, flow_name: str | None = None) -> str:
         "",
         f"CREATE FLOW {flow_name} AS AUTO CDC INTO",
         f"  {flow.target}",
-        "FROM",
-        f"  {flow.source}",
+        f"FROM STREAM {flow.source}",
         "KEYS",
         f"  ({', '.join(flow.keys)})",
     ]
@@ -102,4 +112,4 @@ def render_sql(flow: AutoCdcFlow, *, flow_name: str | None = None) -> str:
     if flow.stored_as_scd_type == 2 and flow.track_history_except_columns:
         lines.append(f"TRACK HISTORY ON * EXCEPT ({', '.join(flow.track_history_except_columns)})")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + ";"

@@ -290,7 +290,17 @@ See the blog series for the full design rationale. In short:
   `STORED AS SCD TYPE`, `TRACK HISTORY ON * EXCEPT`) - the comparison part
   1 draws, made mechanical. Not an executor: AUTO CDC only runs inside a
   Lakeflow Declarative Pipeline, where the platform owns the DAG; this
-  compiles to it, and doesn't attempt to run anything itself.
+  compiles to it, and doesn't attempt to run anything itself. The SQL for
+  scd1 and scd2 (incl. `TRACK HISTORY ON * EXCEPT`) was accepted and run by
+  a Databricks serverless pipeline; the flow reads `FROM STREAM <source>`.
+  Semantics differ from pipetree's merge: scd2 history uses
+  `__START_AT`/`__END_AT` (SEQUENCE BY values, no audit columns), duplicates
+  of a key within one micro-batch each become history versions, and a row
+  with an older sequence in the same micro-batch becomes an earlier version.
+  How a row with an older sequence in a later batch is treated is not
+  verified here (pipetree: the last batch wins). The Python API name
+  `dlt.create_auto_cdc_flow` is unverified, and `delete_mode` is only
+  modeled for `ignore`.
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
 parameters, the `append` retry rule, two real Spark/Delta bugs, the
