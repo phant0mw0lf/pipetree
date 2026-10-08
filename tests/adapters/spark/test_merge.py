@@ -184,6 +184,86 @@ def test_scd1_soft_delete_marks_is_deleted_and_keeps_the_row(spark):
     assert written["_is_deleted"] is True
 
 
+_SOFT_COLS = ["id", "name", "is_deleted_flag"]
+
+
+def _soft_table(name: str, **overrides: Any) -> Table:
+    return make_table(
+        name,
+        "scd1",
+        merge={"delete_when": "is_deleted_flag = true", "delete_mode": "soft"},
+        **overrides,
+    )
+
+
+def _soft_run(spark, table, data, execution_id):
+    merge_scd1(spark, table, spark.createDataFrame(data, _SOFT_COLS), execution_id, "crm")
+
+
+def test_scd1_soft_deleted_key_that_returns_with_identical_values_is_active_again(spark):
+    table = _soft_table("revive_same")
+    _soft_run(spark, table, [(1, "Alice", False)], 1)
+    _soft_run(spark, table, [(1, "Alice", True)], 2)
+
+    _soft_run(spark, table, [(1, "Alice", False)], 3)
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["_is_deleted"] is False
+    assert written["name"] == "Alice"
+    assert written["_execution_id"] == 3
+
+
+def test_scd1_soft_deleted_key_that_returns_with_changed_values_is_active_with_new_values(spark):
+    table = _soft_table("revive_changed")
+    _soft_run(spark, table, [(1, "Alice", False)], 1)
+    _soft_run(spark, table, [(1, "Alice", True)], 2)
+
+    _soft_run(spark, table, [(1, "Alicia", False)], 3)
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["_is_deleted"] is False
+    assert written["name"] == "Alicia"
+    assert written["_execution_id"] == 3
+
+
+def test_scd1_revived_row_keeps_its_surrogate_key_and_inserted_at(spark):
+    table = _soft_table("revive_sk", surrogate_key="sid")
+    _soft_run(spark, table, [(1, "Alice", False), (2, "Bob", False)], 1)
+    before = rows(spark.table(table.fqn))
+    _soft_run(spark, table, [(1, "Alice", True)], 2)
+
+    _soft_run(spark, table, [(1, "Alice", False)], 3)
+
+    after = rows(spark.table(table.fqn))
+    assert after[1]["_is_deleted"] is False
+    assert after[1]["sid"] == before[1]["sid"]
+    assert after[1]["_inserted_at"] == before[1]["_inserted_at"]
+    assert after[2]["sid"] == before[2]["sid"]
+    assert spark.table(table.fqn).count() == 2
+
+
+def test_scd1_deleting_a_live_row_soft_deletes_and_bumps_the_audit_columns(spark):
+    table = _soft_table("delete_live")
+    _soft_run(spark, table, [(1, "Alice", False)], 1)
+
+    _soft_run(spark, table, [(1, "Alice", True)], 2)
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["_is_deleted"] is True
+    assert written["_execution_id"] == 2
+
+
+def test_scd1_deleting_an_absent_key_is_a_no_op(spark):
+    table = _soft_table("delete_absent")
+    _soft_run(spark, table, [(1, "Alice", False)], 1)
+
+    _soft_run(spark, table, [(9, "Ghost", True)], 2)
+
+    written = rows(spark.table(table.fqn))
+    assert set(written) == {1}
+    assert written[1]["_execution_id"] == 1
+
+
 def test_scd1_hard_delete_physically_removes_the_row(spark):
     table = make_table(
         "customer6",
