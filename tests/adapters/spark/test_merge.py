@@ -806,3 +806,129 @@ def test_duplicates_are_warned_about_and_reported_on_the_seed_paths(
         "dropped 1 duplicate row(s) for key (id) - kept the highest (version)" in m
         for m in messages
     )
+
+
+# ------------------------------------------- delete_mode ignore (delete_mode ignore)
+# `ignore` drops the source's delete signal entirely: a delete row behaves as if
+# it were not in the batch (never inserted, never part of the duplicate
+# resolution, never counted in `duplicates_dropped`).
+
+_DEL_COLS = ["id", "name", "is_deleted_flag", "seq"]
+_MERGE = {"scd1": merge_scd1, "scd2": merge_scd2}
+
+
+def _del_table(name: str, strategy: str, mode: str) -> Table:
+    return make_table(
+        f"{name}_{strategy}",
+        strategy,
+        merge={
+            "delete_when": "is_deleted_flag = true",
+            "delete_mode": mode,
+            "sequence_by": ["seq"],
+        },
+    )
+
+
+def _del_run(spark, table, data, execution_id):
+    df = spark.createDataFrame(data, _DEL_COLS)
+    return _MERGE[table.strategy](spark, table, df, execution_id, "crm")
+
+
+def _snapshot(spark, table):
+    """Every stored row, with the audit columns that show whether it was touched."""
+    cols = ["id", "name", "_is_deleted", "_execution_id"]
+    if table.strategy == "scd2":
+        cols.append("_is_current")
+    return sorted(tuple(r[c] for c in cols) for r in spark.table(table.fqn).collect())
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignore_delete_row_for_an_existing_key_does_nothing(spark, strategy):
+    table = _del_table("ign_existing", strategy, "ignore")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+    before = _snapshot(spark, table)
+
+    _del_run(spark, table, [(1, "a", True, 2)], 2)
+
+    assert _snapshot(spark, table) == before
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignore_key_with_only_a_delete_row_is_not_inserted(spark, strategy):
+    table = _del_table("ign_only", strategy, "ignore")
+
+    # first run (seed path) ...
+    _del_run(spark, table, [(1, "a", False, 1), (2, "gone", True, 1)], 1)
+    assert [r[0] for r in _snapshot(spark, table)] == [1]
+
+    # ... and a later run (merge path)
+    _del_run(spark, table, [(3, "gone too", True, 2)], 2)
+    assert [r[0] for r in _snapshot(spark, table)] == [1]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+@pytest.mark.parametrize("seeded", [False, True])
+def test_ignore_normal_row_wins_over_a_delete_row_with_a_higher_sequence(spark, strategy, seeded):
+    table = _del_table(f"ign_seq{int(seeded)}", strategy, "ignore")
+    if seeded:
+        _del_run(spark, table, [(9, "other", False, 1)], 1)
+
+    result = _del_run(spark, table, [(1, "normal", False, 1), (1, "deleted", True, 5)], 2)
+
+    assert result["duplicates_dropped"] == 0
+    assert [(r[0], r[1], r[2]) for r in _snapshot(spark, table) if r[0] == 1] == [
+        (1, "normal", False)
+    ]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+@pytest.mark.parametrize("seeded", [False, True])
+def test_ignore_only_normal_duplicates_are_counted(spark, strategy, seeded):
+    table = _del_table(f"ign_dups{int(seeded)}", strategy, "ignore")
+    if seeded:
+        _del_run(spark, table, [(9, "other", False, 1)], 1)
+
+    result = _del_run(
+        spark,
+        table,
+        [(1, "v1", False, 1), (1, "v2", False, 2), (1, "deleted", True, 9)],
+        2,
+    )
+
+    assert result["duplicates_dropped"] == 1
+    assert [(r[0], r[1]) for r in _snapshot(spark, table) if r[0] == 1] == [(1, "v2")]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_ignore_a_null_delete_when_result_keeps_the_row(spark, strategy):
+    table = _del_table("ign_null", strategy, "ignore")
+
+    _del_run(spark, table, [(1, "a", None, 1), (2, "b", False, 1)], 1)
+
+    assert [(r[0], r[1]) for r in _snapshot(spark, table)] == [(1, "a"), (2, "b")]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_soft_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
+    table = _del_table("soft_seq", strategy, "soft")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+
+    result = _del_run(spark, table, [(1, "a", False, 2), (1, "a", True, 5)], 2)
+
+    assert result["duplicates_dropped"] == 1
+    assert [r[2] for r in _snapshot(spark, table)] == [True]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_hard_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
+    table = _del_table("hard_seq", strategy, "hard")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+
+    result = _del_run(spark, table, [(1, "a", False, 2), (1, "a", True, 5)], 2)
+
+    assert result["duplicates_dropped"] == 1
+    if strategy == "scd1":
+        assert _snapshot(spark, table) == []
+    else:
+        # scd2 hard delete: the history is kept, closed
+        assert [(r[0], r[4]) for r in _snapshot(spark, table)] == [(1, False)]
