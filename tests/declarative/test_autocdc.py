@@ -127,7 +127,7 @@ def test_render_sql_declares_the_streaming_table_and_the_flow():
 def test_render_sql_includes_the_from_and_keys_clauses():
     sql = render_sql(make_flow(keys=["accountid", "region"]))
 
-    assert "FROM\n  bronze_raw.customer" in sql
+    assert "FROM STREAM bronze_raw.customer\n" in sql
     assert "KEYS\n  (accountid, region)" in sql
 
 
@@ -197,3 +197,77 @@ def test_refuses_a_surrogate_key_rather_than_silently_dropping_it():
 
     with pytest.raises(ValueError, match="surrogate_key"):
         translate_table(table, source="bronze_raw.customer")
+
+
+def test_render_sql_scd1_exact_output():
+    flow = make_flow(
+        keys=["accountid"],
+        sequence_by=["versionnumber"],
+        apply_as_delete_when="isdelete = true",
+        stored_as_scd_type=1,
+    )
+
+    assert render_sql(flow) == (
+        "CREATE OR REFRESH STREAMING TABLE bronze.customer;\n"
+        "\n"
+        "CREATE FLOW bronze_customer_flow AS AUTO CDC INTO\n"
+        "  bronze.customer\n"
+        "FROM STREAM bronze_raw.customer\n"
+        "KEYS\n"
+        "  (accountid)\n"
+        "APPLY AS DELETE WHEN\n"
+        "  isdelete = true\n"
+        "SEQUENCE BY\n"
+        "  versionnumber\n"
+        "STORED AS SCD TYPE 1;"
+    )
+
+
+def test_render_sql_scd2_exact_output():
+    flow = make_flow(
+        sequence_by=["versionnumber"],
+        stored_as_scd_type=2,
+        track_history_except_columns=["price"],
+    )
+
+    assert render_sql(flow) == (
+        "CREATE OR REFRESH STREAMING TABLE bronze.customer;\n"
+        "\n"
+        "CREATE FLOW bronze_customer_flow AS AUTO CDC INTO\n"
+        "  bronze.customer\n"
+        "FROM STREAM bronze_raw.customer\n"
+        "KEYS\n"
+        "  (accountid)\n"
+        "SEQUENCE BY\n"
+        "  versionnumber\n"
+        "STORED AS SCD TYPE 2\n"
+        "TRACK HISTORY ON * EXCEPT (price);"
+    )
+
+
+@pytest.mark.parametrize("scd_type", [1, 2])
+@pytest.mark.parametrize("delete_when", [None, "isdelete = true"])
+@pytest.mark.parametrize("ignore", [[], ["price"]])
+def test_render_sql_streams_the_source_and_terminates_the_flow(scd_type, delete_when, ignore):
+    sql = render_sql(
+        make_flow(
+            stored_as_scd_type=scd_type,
+            apply_as_delete_when=delete_when,
+            track_history_except_columns=ignore,
+        )
+    )
+
+    assert "\nFROM STREAM bronze_raw.customer\n" in sql
+    assert "\nFROM\n" not in sql
+    assert sql.endswith(";")
+
+
+def test_two_rendered_tables_form_a_valid_multi_statement_file():
+    first = render_sql(make_flow(target="bronze.a", stored_as_scd_type=1))
+    second = render_sql(make_flow(target="bronze.b", stored_as_scd_type=2))
+
+    statements = [s for s in (first + "\n\n" + second).split(";") if s.strip()]
+
+    assert len(statements) == 4
+    assert (first + "\n\n" + second).rstrip().endswith(";")
+    assert first.count(";") == 2 and second.count(";") == 2
