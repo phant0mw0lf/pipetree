@@ -120,8 +120,8 @@ def test_coverage_detects_each_property_on_hand_built_cases():
 
     batches = [
         [r(1, 1, seq=5), r(1, 1, seq=5), r(2, 2, seq=1), r(2, 2, "y", seq=2)],
-        [r(1, 1, seq=5, seen=9), r(2, 2, "z", seq=1), r(3, 3, op="D")],
-        [r(1, 1, op="D", seq=6), r(None, None), r(None, 4)],
+        [r(1, 1, seq=5, seen=9), r(2, 2, "z", seq=3), r(3, 3, op="D")],
+        [r(1, 1, op="D", seq=6), r(2, 2, "w", seq=1), r(None, None), r(None, 4)],
         [r(1, 1, seq=7)],
         [r(1, 1, seq=7)],
         [],

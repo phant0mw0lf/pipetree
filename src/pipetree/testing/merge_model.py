@@ -17,6 +17,13 @@ Generator contract: a source row must never carry the sentinel key of an
 ``unknown_member`` table (``apply_batch`` raises ``ValueError``), and rows that tie
 for the top ``sequence_by`` value of a key must be identical (``AmbiguousDedupe``),
 because Spark would pick an arbitrary winner.
+
+``sequence_by`` on scd1 also orders rows across batches: an incoming row (after the in-batch
+dedupe) whose sequence tuple is older than the stored row's is ignored, delete rows included
+(no value change, no audit bump); equal or newer updates, so the later batch wins a tie.
+NULL sorts lowest, as in the dedupe. Without ``sequence_by`` the last batch wins. Known
+limit: a hard delete removes the row, so a later older row for that key simply inserts.
+scd2, replace and append keep arrival order (the last batch wins).
 """
 
 from __future__ import annotations
@@ -182,6 +189,11 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
     for new in winners:
         k = _key(table, new)
         existing = by_key.get(k)
+        if existing is not None and table.sequence_by and _seq(table, new) < _seq(table, existing):
+            # sequence_by across batches: an incoming row older than the stored row (compared on
+            # the stored sequence_by columns) is ignored - delete rows and a returning
+            # soft-deleted key included. Equal or newer: the later batch wins.
+            continue
         if _is_delete(table, new):
             if existing is None:
                 # a delete for an absent key is a no-op: delete for an absent key is a no-op
@@ -204,8 +216,7 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
         elif _differs(existing, new, tracked_cols) or existing["_is_deleted"]:
             # a returning soft-deleted key is active again: a soft-deleted key returns active, even
             # with identical values
-            # the last batch wins: the last batch wins regardless of sequence_by; sequence_by only
-            # orders rows inside one batch, so no comparison against the state is needed
+            # not older than the stored row (checked above), so the later batch wins
             for c in table.columns:
                 if c not in table.key:
                     existing[c] = new[c]
