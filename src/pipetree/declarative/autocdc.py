@@ -16,10 +16,11 @@ Pipeline on 2026-10-08. The flow reads `FROM STREAM <source>` (a plain
 every statement ends with a semicolon so rendered tables can be
 concatenated into one pipeline file.
 
-Still unverified: the Python API name `dlt.create_auto_cdc_flow` (Databricks
-renamed it once already). `delete_mode` is not modeled beyond `ignore`
-dropping the delete signal entirely; AUTO CDC's own delete behavior differs
-by `stored_as_scd_type`, so check it against current Databricks docs.
+The Python API `dlt.create_auto_cdc_flow` (scd type 1) also ran on a
+serverless pipeline on 2026-10-09; this module renders SQL only.
+`delete_mode` is not modeled beyond `ignore` dropping the delete signal
+entirely; AUTO CDC's own delete behavior differs by `stored_as_scd_type`, so
+check it against current Databricks docs.
 
 AUTO CDC semantics differ from pipetree's merge:
 
@@ -28,10 +29,11 @@ AUTO CDC semantics differ from pipetree's merge:
   columns.
 - Duplicates of one key inside one micro-batch each become history versions
   (pipetree reduces them to one first).
-- A row with an older sequence that arrives in the same micro-batch is
-  inserted as an earlier history version.
-- How AUTO CDC treats a row whose sequence is older than the stored one in a
-  LATER batch is not verified here (pipetree's rule: the last batch wins).
+- A row with an older sequence is treated by sequence, not by arrival, in
+  the same micro-batch and in a later one: scd1 keeps the row with the
+  higher sequence, scd2 inserts the late row as an earlier history version.
+  pipetree follows the same rule when `sequence_by` is configured (its late
+  scd2 version has an empty validity interval, see the pipetree README).
 """
 
 from __future__ import annotations

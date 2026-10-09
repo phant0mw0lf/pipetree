@@ -295,11 +295,12 @@ See the blog series for the full design rationale. In short:
   a Databricks serverless pipeline; the flow reads `FROM STREAM <source>`.
   Semantics differ from pipetree's merge: scd2 history uses
   `__START_AT`/`__END_AT` (SEQUENCE BY values, no audit columns), duplicates
-  of a key within one micro-batch each become history versions, and a row
-  with an older sequence in the same micro-batch becomes an earlier version.
-  How a row with an older sequence in a later batch is treated is not
-  verified here (pipetree: the last batch wins). The Python API name
-  `dlt.create_auto_cdc_flow` is unverified, and `delete_mode` is only
+  of a key within one micro-batch each become history versions. A row with
+  an older sequence is handled by sequence in the same micro-batch and in a
+  later one (scd1 keeps the higher sequence, scd2 inserts an earlier
+  version); pipetree follows the same rule when `sequence_by` is configured.
+  The Python API `dlt.create_auto_cdc_flow` (scd type 1) also ran on a
+  serverless pipeline; the translator renders SQL only. `delete_mode` is only
   modeled for `ignore`.
 
 See `NOTES-for-blog.md` for the design decisions and trade-offs (retry
