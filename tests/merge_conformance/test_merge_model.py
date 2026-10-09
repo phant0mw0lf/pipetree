@@ -352,7 +352,7 @@ def test_composite_key_all_null_row_is_dropped():
 
 
 def test_replace_and_append_keep_null_key_rows():
-    # NULL business keys (user, 2026-10-07): the NULL-key drop applies to scd1/scd2 only, where
+    # NULL business keys: the NULL-key drop applies to scd1/scd2 only, where
     # the key drives the merge; replace/append keep every row as it comes.
     for strategy in ("replace", "append"):
         t = T(strategy)
