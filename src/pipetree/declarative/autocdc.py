@@ -9,18 +9,12 @@ pipetree has nothing to execute here, only something to compile to. Only
 `scd1`/`scd2` tables translate; `replace`/`append` need no CDC apparatus
 at all, just a plain streaming table or materialized view.
 
-The SQL rendered for scd1 and scd2 (including `TRACK HISTORY ON * EXCEPT`)
-was accepted and executed by a Databricks serverless Lakeflow Declarative
-Pipeline on 2026-10-08. The flow reads `FROM STREAM <source>` (a plain
-`FROM <source>` is rejected: the source must be a streaming query), and
-every statement ends with a semicolon so rendered tables can be
-concatenated into one pipeline file.
-
-The Python API `dlt.create_auto_cdc_flow` (scd type 1) also ran on a
-serverless pipeline on 2026-10-09; this module renders SQL only.
-`delete_mode` is not modeled beyond `ignore` dropping the delete signal
-entirely; AUTO CDC's own delete behavior differs by `stored_as_scd_type`, so
-check it against current Databricks docs.
+The flow reads `FROM STREAM <source>` (Databricks rejects a plain
+`FROM <source>`: the source must be a streaming query), and every statement
+ends with a semicolon so rendered tables can be concatenated into one
+pipeline file. `delete_mode` is not modeled beyond `ignore` dropping the
+delete signal entirely; AUTO CDC's own delete behavior differs by
+`stored_as_scd_type`, so check it against current Databricks docs.
 
 AUTO CDC semantics differ from pipetree's merge:
 
