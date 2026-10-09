@@ -19,7 +19,7 @@ from functools import reduce
 from typing import Any
 
 from delta.tables import DeltaTable
-from pyspark.sql import Column, DataFrame, Row, SparkSession
+from pyspark.sql import Column, DataFrame, Row, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DataType,
@@ -28,8 +28,10 @@ from pyspark.sql.types import (
     DoubleType,
     FloatType,
     IntegralType,
+    LongType,
     NumericType,
     StringType,
+    StructField,
     StructType,
     TimestampNTZType,
     TimestampType,
@@ -255,6 +257,11 @@ def merge_scd2(
     columns = reconciliation.columns
     prepared = _prepare_source(deduped, table)
 
+    # sequence_by: a row older than its key's latest version is a late arrival. It never goes
+    # through the close/open merge below; it is ignored (delete row), a no-op, or inserted as an
+    # earlier version afterwards. Planned now, from the pre-merge snapshot.
+    late_plan, prepared = _plan_late_versions(spark, table, prepared, columns, reconciliation)
+
     not_deleted = prepared.filter(~F.col(_IS_DELETE_COL)).drop(_IS_DELETE_COL)
     current_before = spark.table(table.fqn).filter("_is_current = true")
     # Materialized now, before the merge below mutates the table this reads
@@ -321,10 +328,163 @@ def merge_scd2(
         writer.saveAsTable(table.fqn)
         row_count += new_version_count
 
+    row_count += _write_late_versions(
+        spark,
+        table,
+        late_plan,
+        new_versions_schema,
+        execution_id,
+        source_system,
+        now,
+        reconciliation.needs_schema_evolution,
+    )
+
     result: dict[str, Any] = {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
     if reconciliation.changes:
         result["schema_changes"] = [str(change) for change in reconciliation.changes]
     return result
+
+
+def _plan_late_versions(
+    spark: SparkSession,
+    table: Table,
+    prepared: DataFrame,
+    columns: list,
+    reconciliation: SchemaReconciliation,
+) -> tuple[list[tuple[dict[str, Any], int]], DataFrame]:
+    """Split the batch (one row per key) at `sequence_by`: returns the plan for the rows older
+    than their key's latest version (by `_valid_from`, deleted or not) and the rest of the
+    batch, which keeps the ordinary close/open merge.
+
+    A late delete row is ignored. A late data row is a no-op when it equals (tracked columns)
+    the live version valid at its sequence - the latest version with a sequence <= its own -
+    and otherwise becomes a closed version right after that one. Validity is processing time
+    and a late version never was valid in it: its interval is empty, `_valid_from` =
+    `_valid_to` = the `_valid_from` of the next later version (of the first version when it is
+    older than all). No other row changes; see `testing/README.md`."""
+    empty: list[tuple[dict[str, Any], int]] = []
+    seq_cols = list(table.merge.sequence_by)
+    if not seq_cols:
+        return empty, prepared
+
+    target_columns = reconciliation.target_columns
+    latest = (
+        spark.table(table.fqn)
+        .withColumn(
+            "_rn",
+            F.row_number().over(
+                Window.partitionBy(*table.business_key).orderBy(
+                    F.col("_valid_from").desc(),
+                    # an empty-interval late version shares its _valid_from with the next one
+                    *[F.col(c).desc_nulls_last() for c in seq_cols if c in target_columns],
+                    # late versions of equal sequence: the later batch is the later version
+                    F.col("_execution_id").desc(),
+                    F.col("_inserted_at").desc(),
+                )
+            ),
+        )
+        .filter("_rn = 1")
+    )
+    is_late = f"NOT ({_not_older_sql(table, target_columns)})"
+    late_df = (
+        prepared.alias("source")
+        .join(latest.alias("target"), F.expr(_key_condition(table)), "inner")
+        .filter(is_late)
+        .select("source.*")
+    )
+    # Materialized on the driver now: the merge below must not re-evaluate this against the
+    # table it mutates.
+    late_rows = [r.asDict() for r in late_df.collect()]
+    if not late_rows:
+        return empty, prepared
+
+    keys = list(table.business_key)
+    key_schema = prepared.select(*keys).schema
+    late_keys = spark.createDataFrame([[r[k] for k in keys] for r in late_rows], schema=key_schema)
+    rest = prepared.join(
+        late_keys, [prepared[k].eqNullSafe(late_keys[k]) for k in keys], "left_anti"
+    )
+
+    history: dict[tuple, list[dict]] = {}
+    stored = spark.table(table.fqn)
+    versions_df = stored.join(
+        late_keys, [stored[k].eqNullSafe(late_keys[k]) for k in keys], "left_semi"
+    )
+    for v in versions_df.collect():
+        d = v.asDict()
+        history.setdefault(tuple(d[k] for k in keys), []).append(d)
+
+    def seq_of(row: dict) -> tuple:
+        return tuple(
+            (row.get(c) is not None, 0 if row.get(c) is None else row[c]) for c in seq_cols
+        )
+
+    compare = _comparable_columns(columns, table, target_columns)
+    inserts: list[tuple[dict[str, Any], int]] = []
+    for row in late_rows:
+        if row[_IS_DELETE_COL]:
+            continue  # an older delete row is ignored
+        key = tuple(row[k] for k in keys)
+        versions = sorted(
+            history[key],
+            key=lambda v: (v["_valid_from"], seq_of(v), v["_execution_id"], v["_inserted_at"]),
+        )
+        seq = seq_of(row)
+        pos = next(i for i, v in enumerate(versions) if seq_of(v) > seq)
+        before, after = (versions[pos - 1] if pos else None), versions[pos]
+        if (
+            before is not None
+            and not before["_is_deleted"]
+            and all(_same_value(before.get(c), row[c]) for c in compare)
+        ):
+            continue  # the version valid at that sequence already says so
+        inserts.append(({c: row[c] for c in columns}, after["_valid_from"]))
+    return inserts, rest
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    """Equality as `<=>`: NULL equals NULL, NaN equals NaN."""
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
+        return True
+    return bool(a == b)
+
+
+def _write_late_versions(
+    spark: SparkSession,
+    table: Table,
+    plan: list[tuple[dict[str, Any], int]],
+    business_schema: StructType,
+    execution_id: int,
+    source_system: str | None,
+    now: int,
+    needs_schema_evolution: bool,
+) -> int:
+    """Append the late versions of a `_plan_late_versions` plan as closed rows with an empty
+    validity interval. Returns the number of versions inserted."""
+    if not plan:
+        return 0
+    schema = StructType(
+        [
+            *business_schema.fields,
+            StructField("_valid_from", LongType()),
+            StructField("_valid_to", LongType()),
+        ]
+    )
+    names = [f.name for f in business_schema.fields]
+    frame = spark.createDataFrame(
+        [[row[n] for n in names] + [start, start] for row, start in plan], schema=schema
+    )
+    stamped = _with_values(
+        frame,
+        {**insert_audit_values(execution_id, source_system, now), "_is_current": F.lit(False)},
+    )
+    writer = stamped.write.format("delta").mode("append")
+    if needs_schema_evolution:
+        writer = writer.option("mergeSchema", "true")
+    writer.saveAsTable(table.fqn)
+    return len(plan)
 
 
 def seed_unknown_member(spark: SparkSession, table: Table, execution_id: int) -> None:

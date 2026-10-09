@@ -23,6 +23,7 @@ from pipetree.testing.merge_model import (
     AmbiguousDedupe,
     BatchStats,
     ModelTable,
+    _apply_scd2_late,
     _audit,
     _differs,
     _is_delete,
@@ -161,6 +162,11 @@ class QuirkModel:
         ignored = [c for c in table.ignore if c not in table.key]
         for new in winners:
             k = _key(table, new)
+            versions = [r for r in state if _key(table, r) == k]
+            if table.sequence_by and versions and _seq(table, new) < _seq(table, versions[-1]):
+                # sequence_by: a late row becomes an earlier version (shared with the reference)
+                _apply_scd2_late(table, state, versions, new, n, tracked)
+                continue
             current = next((r for r in state if r["_is_current"] and _key(table, r) == k), None)
             if is_del(new):
                 if current is not None:

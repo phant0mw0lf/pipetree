@@ -191,3 +191,22 @@ def test_every_flag_is_a_deviation_and_unknown_flags_are_rejected():
     assert set(FLAGS) == set(DEVIATIONS)
     with pytest.raises(ValueError, match="unknown quirk"):
         QuirkModel({"F99"})
+
+
+def test_scd2_version_order_is_total_for_late_versions_of_equal_sequence():
+    # two late versions of one key: equal sequence and equal _valid_from (both sit at the next
+    # later version's _valid_from); the later batch (_execution_id) is the later version
+    from pipetree.testing.merge_harness import _normalise_raw
+
+    t = ModelTable(strategy="scd2", key=("id",), columns=COLS, sequence_by=("seq",))
+
+    def row(v, seq, e, ins, vf, vt, cur):
+        r = V(1, vf, vt, cur=cur, v=v, ins=ins)
+        r.update(seq=seq, _execution_id=e)
+        return r
+
+    a = row("a", 1, 3, 30, 100, 100, False)
+    b = row("b", 1, 5, 50, 100, 100, False)
+    c = row("c", 2, 2, 20, 100, None, True)
+    for raw in ([c, b, a], [b, c, a], [a, c, b], [b, a, c]):
+        assert [r["v"] for r in _normalise_raw(list(raw), t)] == ["a", "b", "c"]

@@ -314,12 +314,135 @@ def test_ignore_columns_alone_update_in_place_without_bump():
     assert state == [R(1, "a", w="x", e=2, cur=False), R(1, "b", w="y", e=2, cur=True)]
 
 
-def test_scd2_late_older_sequence_still_overwrites():
-    # scd2 keeps arrival order: the last batch wins, even with an older sequence_by
-    t = T("scd2", sequence_by=("seq",))
+def test_scd2_without_sequence_by_keeps_arrival_order():
+    t = T("scd2")
     state, _ = run(t, B({"id": 1, "v": "new", "seq": 9}), B({"id": 1, "v": "old", "seq": 1}))
-    cur = [r for r in state if r["_is_current"]]
-    assert [(r["v"], r["seq"], r["_execution_id"]) for r in cur] == [("old", 1, 2)]
+    assert [(r["v"], r["_is_current"]) for r in state] == [("new", False), ("old", True)]
+
+
+def test_scd2_late_row_becomes_an_earlier_version():
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 5}),
+        B({"id": 1, "v": "b", "seq": 9}),
+        B({"id": 1, "v": "c", "seq": 7}),
+    )
+    # history by sequence: a(5) < c(7) < b(9); no existing version changes
+    assert state == [
+        R(1, "a", seq=5, e=2, cur=False),
+        R(1, "c", seq=7, e=3, cur=False),
+        R(1, "b", seq=9, e=2, cur=True),
+    ]
+
+
+def test_scd2_replayed_old_row_is_a_noop():
+    # "equal" compares the tracked columns, sequence_by columns included (as for any row): a
+    # replay of a row a stored version already carries changes nothing
+    t = T("scd2", sequence_by=("seq",))
+    first = [B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "v": "b", "seq": 9})]
+    before, _ = run(t, *first)
+    state, _ = run(t, *first, B({"id": 1, "v": "a", "seq": 5}))
+    assert state == before
+    state, _ = run(t, *first, *first)
+    assert state == before
+
+
+def test_scd2_late_row_older_than_every_version_becomes_the_first_one():
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "b", "seq": 9}), B({"id": 1, "v": "a", "seq": 2}))
+    assert state == [R(1, "a", seq=2, e=2, cur=False), R(1, "b", seq=9, e=1, cur=True)]
+
+
+def test_scd2_late_row_equal_to_the_next_version_still_inserts():
+    # only the version valid at the late row's sequence is compared
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 5}),
+        B({"id": 1, "v": "b", "seq": 9}),
+        B({"id": 1, "v": "b", "seq": 7}),
+    )
+    assert [(r["v"], r["seq"], r["_is_current"]) for r in state] == [
+        ("a", 5, False),
+        ("b", 7, False),
+        ("b", 9, True),
+    ]
+
+
+def test_scd2_equal_sequence_across_batches_the_later_batch_wins():
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "v": "b", "seq": 5}))
+    assert state == [R(1, "a", seq=5, e=2, cur=False), R(1, "b", seq=5, e=2, cur=True)]
+
+
+def test_scd2_newer_sequence_closes_and_opens_as_before():
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "v": "b", "seq": 6}))
+    assert state == [R(1, "a", seq=5, e=2, cur=False), R(1, "b", seq=6, e=2, cur=True)]
+
+
+def test_scd2_late_row_only_differing_in_an_ignored_column_is_a_noop():
+    t = T("scd2", sequence_by=("seq",), ignore=("w",))
+    first = [B({"id": 1, "v": "a", "w": "x", "seq": 5}), B({"id": 1, "v": "b", "seq": 9})]
+    before, _ = run(t, *first)
+    state, _ = run(t, *first, B({"id": 1, "v": "a", "w": "y", "seq": 5}))
+    assert state == before
+
+
+def test_scd2_older_soft_delete_is_ignored_newer_closes():
+    t = T("scd2", sequence_by=("seq",), has_delete=True)
+    first = [B({"id": 1, "v": "a", "seq": 5})]
+    before, _ = run(t, *first)
+    state, _ = run(t, *first, B(D(1, seq=2)))
+    assert state == before
+    state, _ = run(t, *first, B(D(1, seq=8)))
+    assert state == [R(1, "a", seq=5, e=2, d=True, cur=False)]
+
+
+def test_scd2_late_row_before_a_deleted_last_version_is_inserted_earlier():
+    t = T("scd2", sequence_by=("seq",), has_delete=True)
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 5}),
+        B(D(1, seq=6)),
+        B({"id": 1, "v": "z", "seq": 2}),
+    )
+    assert state == [
+        R(1, "z", seq=2, e=3, cur=False),
+        R(1, "a", seq=5, e=2, d=True, cur=False),
+    ]
+    assert not any(r["_is_current"] for r in state)
+
+
+def test_scd2_row_after_a_deleted_last_version_opens_a_new_current_one():
+    t = T("scd2", sequence_by=("seq",), has_delete=True)
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 5}),
+        B(D(1, seq=6)),
+        B({"id": 1, "v": "a", "seq": 7}),
+    )
+    assert state == [
+        R(1, "a", seq=5, e=2, d=True, cur=False),
+        R(1, "a", seq=7, e=3, cur=True),
+    ]
+
+
+def test_scd2_late_row_after_a_deleted_version_leaves_that_version_alone():
+    t = T("scd2", sequence_by=("seq",), has_delete=True)
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 1}),
+        B(D(1, seq=2)),
+        B({"id": 1, "v": "c", "seq": 8}),
+        B({"id": 1, "v": "d", "seq": 4}),
+    )
+    assert state == [
+        R(1, "a", seq=1, e=2, d=True, cur=False),
+        R(1, "d", seq=4, e=4, cur=False),
+        R(1, "c", seq=8, e=3, cur=True),
+    ]
 
 
 def test_scd1_older_sequence_is_ignored_across_batches():
@@ -509,3 +632,18 @@ def test_apply_batch_does_not_mutate_its_input():
         apply_batch(t, state, batch, 2, init=True)
         assert state == state_before
         assert batch == batch_before
+
+
+def test_scd2_two_late_rows_of_equal_sequence_the_later_batch_is_the_later_version():
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "c", "seq": 2}),
+        B({"id": 1, "v": "a", "seq": 1}),
+        B({"id": 1, "v": "b", "seq": 1}),
+    )
+    assert state == [
+        R(1, "a", seq=1, e=2, cur=False),
+        R(1, "b", seq=1, e=3, cur=False),
+        R(1, "c", seq=2, e=1, cur=True),
+    ]
