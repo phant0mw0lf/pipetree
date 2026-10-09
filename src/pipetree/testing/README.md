@@ -3,7 +3,11 @@
 Test tooling for pipetree's merge strategies. Not a stable API.
 
 - `merge_model` - pure-Python reference model of `replace`, `append`, `scd1`,
-  `scd2` (the documented merge rules). No pyspark import.
+  `scd2` (the documented merge rules). No pyspark import. With `sequence_by`, scd1
+  also orders rows across batches: an incoming row older than the stored row is
+  ignored (delete rows too), equal or newer wins; NULL sorts lowest. Without
+  `sequence_by`, and for scd2/replace/append, the last batch wins. Known limit: a
+  hard delete removes the row, so a later older row for that key simply inserts.
 - `merge_gen` - seeded generator of valid table configs and batch histories
   (`generate_case(seed, strategy)`, `coverage(case)`). No pyspark import.
 - `merge_harness` - runs a case through `SparkAdapter.run_table` on a given

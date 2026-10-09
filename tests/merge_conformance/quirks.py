@@ -131,6 +131,12 @@ class QuirkModel:
         for new in winners:
             k = _key(table, new)
             existing = next((r for r in state if _key(table, r) == k), None)
+            if (
+                existing is not None
+                and table.sequence_by
+                and _seq(table, new) < _seq(table, existing)
+            ):
+                continue  # older than the stored row: ignored (sequence_by across batches)
             if is_del(new):
                 if existing is None:
                     continue

@@ -169,6 +169,8 @@ def merge_scd1(
 
     key_cond = _key_condition(table)
     change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
+    # sequence_by across batches: an incoming row older than the stored one is ignored.
+    not_older = _not_older_sql(table, reconciliation.target_columns)
     insert_values = _column_mapping(columns, insert_audit_values(execution_id, source_system, now))
     update_values = _column_mapping(columns, update_audit_values(execution_id, source_system, now))
     # A key that returns after a soft delete is active again (a returning soft-deleted key is active
@@ -185,21 +187,26 @@ def merge_scd1(
         }
         merge_builder = merge_builder.whenMatchedUpdate(
             # Deleting an already soft-deleted row is a no-op (re-runs are safe).
-            condition=f"source.{_IS_DELETE_COL} = true AND target._is_deleted = false",
+            condition=(
+                f"source.{_IS_DELETE_COL} = true AND target._is_deleted = false AND {not_older}"
+            ),
             set=soft_delete_values,
         )
     elif table.merge.delete_mode == "hard":
-        merge_builder = merge_builder.whenMatchedDelete(condition=f"source.{_IS_DELETE_COL} = true")
+        merge_builder = merge_builder.whenMatchedDelete(
+            condition=f"source.{_IS_DELETE_COL} = true AND {not_older}"
+        )
 
     row_count = prepared.count()
     merge_builder = merge_builder.whenMatchedUpdate(
         condition=(
-            f"source.{_IS_DELETE_COL} = false AND ({change_cond} OR target._is_deleted = true)"
+            f"source.{_IS_DELETE_COL} = false AND ({change_cond} OR target._is_deleted = true) "
+            f"AND {not_older}"
         ),
         set=update_values,
     )
     in_place = _ignored_change_update(
-        columns, table, reconciliation.target_columns, "target._is_deleted = false"
+        columns, table, reconciliation.target_columns, f"target._is_deleted = false AND {not_older}"
     )
     if in_place is not None:
         # Only ignored columns changed (ignore_columns alone update in place): written in place,
@@ -652,6 +659,27 @@ def _ignored_change_update(
     ]
     set_values: dict[str, str | Column] = {c: f"source.{c}" for c in written}
     return condition, set_values
+
+
+def _not_older_sql(table: Table, existing_columns: frozenset[str] | None = None) -> str:
+    """SQL: the source row's `sequence_by` tuple is >= the target's (scd1 across
+    batches: equal or newer wins, older is ignored). Lexicographic, NULL lowest and
+    equal to NULL - the order `dedupe_for_merge` uses. `true` without `sequence_by`.
+    A column the target lacks (just added) counts as NULL on the target side."""
+    cols = table.merge.sequence_by
+    if not cols:
+        return "true"
+
+    def target(c: str) -> str:
+        return f"target.{c}" if existing_columns is None or c in existing_columns else "NULL"
+
+    expr = ""
+    for c in reversed(cols):
+        s, t = f"source.{c}", target(c)
+        greater = f"({s} IS NOT NULL AND ({t} IS NULL OR {s} > {t}))"
+        equal = f"({s} <=> {t})"
+        expr = f"({greater} OR {equal})" if not expr else f"({greater} OR ({equal} AND {expr}))"
+    return expr
 
 
 def _change_condition_sql(

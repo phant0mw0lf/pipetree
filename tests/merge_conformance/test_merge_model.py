@@ -314,13 +314,91 @@ def test_ignore_columns_alone_update_in_place_without_bump():
     assert state == [R(1, "a", w="x", e=2, cur=False), R(1, "b", w="y", e=2, cur=True)]
 
 
-def test_late_older_sequence_still_overwrites():
-    # the last batch wins: the last batch wins, even with an older sequence_by
-    for strategy in ("scd1", "scd2"):
-        t = T(strategy, sequence_by=("seq",))
-        state, _ = run(t, B({"id": 1, "v": "new", "seq": 9}), B({"id": 1, "v": "old", "seq": 1}))
-        cur = [r for r in state if r.get("_is_current", True)]
-        assert [(r["v"], r["seq"], r["_execution_id"]) for r in cur] == [("old", 1, 2)], strategy
+def test_scd2_late_older_sequence_still_overwrites():
+    # scd2 keeps arrival order: the last batch wins, even with an older sequence_by
+    t = T("scd2", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "new", "seq": 9}), B({"id": 1, "v": "old", "seq": 1}))
+    cur = [r for r in state if r["_is_current"]]
+    assert [(r["v"], r["seq"], r["_execution_id"]) for r in cur] == [("old", 1, 2)]
+
+
+def test_scd1_older_sequence_is_ignored_across_batches():
+    t = T("scd1", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "new", "seq": 9}), B({"id": 1, "v": "old", "seq": 1}))
+    assert state == [R(1, "new", seq=9, e=1)]
+
+
+def test_scd1_newer_and_equal_sequence_update():
+    t = T("scd1", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 1}), B({"id": 1, "v": "b", "seq": 2}))
+    assert state == [R(1, "b", seq=2, e=2)]
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 2}), B({"id": 1, "v": "b", "seq": 2}))
+    assert state == [R(1, "b", seq=2, e=2)]
+
+
+def test_scd1_without_sequence_by_last_batch_wins():
+    t = T("scd1")
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 9}), B({"id": 1, "v": "b", "seq": 1}))
+    assert state == [R(1, "b", seq=1, e=2)]
+
+
+def test_scd1_older_sequence_ignores_ignored_column_change_too():
+    t = T("scd1", sequence_by=("seq",), ignore=("w",))
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "w": "x", "seq": 9}), B({"id": 1, "v": "a", "w": "y", "seq": 1})
+    )
+    assert state == [R(1, "a", w="x", seq=9, e=1)]
+
+
+def test_scd1_older_soft_delete_is_ignored_newer_applies():
+    t = T("scd1", sequence_by=("seq",), has_delete=True)
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "op": "D", "seq": 2}))
+    assert state == [R(1, "a", seq=5, e=1)]
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "op": "D", "seq": 7}))
+    assert state == [R(1, "a", seq=5, e=2, d=True)]
+
+
+def test_scd1_returning_soft_deleted_key_compares_against_stored_sequence():
+    t = T("scd1", sequence_by=("seq",), has_delete=True)
+    deleted = B({"id": 1, "op": "D", "seq": 7})
+    first = B({"id": 1, "v": "a", "seq": 5})
+    state, _ = run(t, first, deleted, B({"id": 1, "v": "old", "seq": 3}))
+    assert state == [R(1, "a", seq=5, e=2, d=True)]
+    state, _ = run(t, first, deleted, B({"id": 1, "v": "back", "seq": 6}))
+    assert state == [R(1, "back", seq=6, e=3)]
+
+
+def test_scd1_null_sequence_sorts_lowest():
+    t = T("scd1", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 1}), B({"id": 1, "v": "b", "seq": None}))
+    assert state == [R(1, "a", seq=1, e=1)]
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": None}), B({"id": 1, "v": "b", "seq": 1}))
+    assert state == [R(1, "b", seq=1, e=2)]
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": None}), B({"id": 1, "v": "b", "seq": None}))
+    assert state == [R(1, "b", seq=None, e=2)]
+
+
+def test_scd1_multi_column_sequence_compares_lexicographically():
+    t = T("scd1", sequence_by=("seq", "w"))
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "seq": 2, "w": 1}), B({"id": 1, "v": "b", "seq": 1, "w": 9})
+    )
+    assert state == [R(1, "a", seq=2, w=1, e=1)]
+    state, _ = run(
+        t, B({"id": 1, "v": "a", "seq": 2, "w": 1}), B({"id": 1, "v": "b", "seq": 2, "w": 2})
+    )
+    assert state == [R(1, "b", seq=2, w=2, e=2)]
+
+
+def test_scd1_hard_delete_then_older_row_inserts_known_limit():
+    t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode="hard")
+    state, _ = run(
+        t,
+        B({"id": 1, "v": "a", "seq": 5}),
+        B({"id": 1, "op": "D", "seq": 6}),
+        B({"id": 1, "v": "old", "seq": 1}),
+    )
+    assert state == [R(1, "old", seq=1, e=3)]
 
 
 def test_single_key_null_row_is_dropped_and_counted():
