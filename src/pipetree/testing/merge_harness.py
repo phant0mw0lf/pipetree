@@ -121,6 +121,19 @@ def _sort_value(v: Any) -> tuple:
     return (v is not None, 0 if v is None else v)
 
 
+def _version_order(t: ModelTable, row: dict) -> tuple:
+    """scd2 version order within a key, a TOTAL order: `_valid_from`, then the sequence (a late
+    version shares its `_valid_from` with the next later one), then `_execution_id` and
+    `_inserted_at` (late versions of equal sequence: the later batch is the later version;
+    a late version is never modified, so its audit values are stable)."""
+    return (
+        _sort_value(row["_valid_from"]),
+        tuple(_sort_value(row[c]) for c in t.sequence_by),
+        _sort_value(row["_execution_id"]),
+        _sort_value(row["_inserted_at"]),
+    )
+
+
 def _key_sort(t: ModelTable, row: dict) -> tuple:
     return tuple(_sort_value(row[c]) for c in t.key)
 
@@ -141,7 +154,7 @@ def _project(t: ModelTable, row: dict) -> dict:
 
 def _normalise_raw(raw: list[dict], t: ModelTable) -> list[dict]:
     if t.strategy == "scd2":
-        ordered = sorted(raw, key=lambda r: (_key_sort(t, r), _sort_value(r["_valid_from"])))
+        ordered = sorted(raw, key=lambda r: (_key_sort(t, r), _version_order(t, r)))
     else:
         ordered = sorted(raw, key=lambda r: (_key_sort(t, r), repr(_project(t, r))))
     return [_project(t, r) for r in ordered]
@@ -230,7 +243,7 @@ def state_from_table(raw: list[dict], t: ModelTable) -> list[dict]:
     compared columns, scd2 versions in ``_valid_from`` order."""
     cols = _compared_columns(t)
     if t.strategy == "scd2":
-        ordered = sorted(raw, key=lambda r: (_key_sort(t, r), _sort_value(r["_valid_from"])))
+        ordered = sorted(raw, key=lambda r: (_key_sort(t, r), _version_order(t, r)))
     else:
         ordered = list(raw)
     return [{c: r[c] for c in cols} for r in ordered]
@@ -241,7 +254,9 @@ def state_from_table(raw: list[dict], t: ModelTable) -> list[dict]:
 
 def _identity(t: ModelTable, row: dict) -> tuple:
     k = tuple(row[c] for c in t.key)
-    return (k, row["_valid_from"]) if t.strategy == "scd2" else k
+    # A late version (sequence_by) has an empty interval at the next version's _valid_from, so
+    # (key, _valid_from) alone can repeat; _inserted_at never changes and tells them apart.
+    return (k, row["_valid_from"], row["_inserted_at"]) if t.strategy == "scd2" else k
 
 
 def _unique_by_identity(t: ModelTable, raw: list[dict]) -> dict[tuple, dict]:
@@ -295,7 +310,7 @@ def check_invariants(
             counts[_identity(t, r)] = counts.get(_identity(t, r), 0) + 1
             if r["_updated_at"] < r["_inserted_at"]:
                 problems.append(("updated_before_inserted", f"_updated_at < _inserted_at: {r}"))
-        what = "key, _valid_from" if t.strategy == "scd2" else "key"
+        what = "key, _valid_from, _inserted_at" if t.strategy == "scd2" else "key"
         problems += [
             ("identity_unique", f"{n} rows share ({what}) {i}") for i, n in counts.items() if n > 1
         ]
@@ -357,7 +372,7 @@ def _scd2_invariants(t: ModelTable, raw: list[dict]) -> list[tuple[str, str]]:
     for r in raw:
         by_key.setdefault(tuple(r[c] for c in t.key), []).append(r)
     for k, versions in by_key.items():
-        versions.sort(key=lambda r: _sort_value(r["_valid_from"]))
+        versions.sort(key=lambda r: _version_order(t, r))
         if sum(bool(r["_is_current"]) for r in versions) > 1:
             problems.append(("scd2_one_current", f"key {k}: more than one current version"))
         for i, r in enumerate(versions):

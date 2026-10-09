@@ -23,7 +23,21 @@ dedupe) whose sequence tuple is older than the stored row's is ignored, delete r
 (no value change, no audit bump); equal or newer updates, so the later batch wins a tie.
 NULL sorts lowest, as in the dedupe. Without ``sequence_by`` the last batch wins. Known
 limit: a hard delete removes the row, so a later older row for that key simply inserts.
-scd2, replace and append keep arrival order (the last batch wins).
+
+``sequence_by`` on scd2 orders the versions of a key by their sequence tuple (NULL lowest); ties
+across batches: the later batch is the newer. A row whose sequence is >= the key's latest version
+works as without ``sequence_by`` (close the current version and open a new one if a tracked column
+differs; unchanged -> untouched). A row OLDER than the latest version is a late arrival: a delete
+row is ignored; a data row equal (tracked columns, ``sequence_by`` columns included) to the live
+version valid at its sequence (the latest with sequence <= its own) is a no-op, any other becomes
+a closed version right after that one (first, if none is older). No other version changes, and the
+current version (highest sequence) stays current. Validity (``_valid_from``/``_valid_to``) is
+processing time and not modelled here: a late version never was valid in processing time, so it
+has an empty interval (``_valid_from`` = ``_valid_to`` = the ``_valid_from`` of the next later
+version) and shows up in the history order only; a point-in-time query never returns it. Known
+limit: a delete row's own sequence is not stored, so after a delete a row with a sequence >= the
+deleted version's reopens the key even if the delete was newer. replace and append keep arrival
+order (the last batch wins).
 """
 
 from __future__ import annotations
@@ -228,11 +242,41 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
                 existing[c] = new[c]
 
 
+def _apply_scd2_late(
+    table: ModelTable,
+    state: list[dict],
+    versions: list[dict],
+    new: dict,
+    n: int,
+    tracked_cols: list[str],
+) -> None:
+    """A row whose sequence is older than the key's latest version (`versions`, oldest
+    first). A delete row is ignored. Otherwise `before` is the latest version with a
+    sequence <= the row's: if it is live and equal in the tracked columns the row is a
+    no-op; else the row becomes a closed version right after `before` (first, if there is
+    none). No other version changes: the new one has an empty validity interval."""
+    if _is_delete(table, new):
+        return
+    seq = _seq(table, new)
+    pos = sum(1 for v in versions if _seq(table, v) <= seq)
+    before = versions[pos - 1] if pos else None
+    if before is not None and not before["_is_deleted"] and not _differs(before, new, tracked_cols):
+        return
+    row = _audit(new, n, table)
+    row["_is_current"] = False
+    at = state.index(before) + 1 if before is not None else state.index(versions[0])
+    state.insert(at, row)
+
+
 def _apply_scd2(table: ModelTable, state: list[dict], winners: list[dict], n: int) -> None:
     tracked_cols = [c for c in table.columns if c not in table.key and c not in table.ignore]
     ignored_cols = [c for c in table.ignore if c not in table.key]
     for new in winners:
         k = _key(table, new)
+        versions = [r for r in state if _key(table, r) == k]  # oldest first
+        if table.sequence_by and versions and _seq(table, new) < _seq(table, versions[-1]):
+            _apply_scd2_late(table, state, versions, new, n, tracked_cols)
+            continue
         current = next((r for r in state if r["_is_current"] and _key(table, r) == k), None)
         if _is_delete(table, new):
             if current is not None:
