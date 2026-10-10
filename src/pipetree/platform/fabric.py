@@ -9,8 +9,7 @@ fully-qualified `abfss://<workspace>@onelake.dfs.fabric.microsoft.com/
 caller can build one if it needs that, this class doesn't assume it.
 
 `run_metadata`, like on `DatabricksPlatform`, is supplied by the caller
-rather than pulled from `notebookutils.runtime.context` here - the exact
-shape of that context needs checking against a real workspace.
+rather than pulled from `notebookutils.runtime.context` here.
 
 `acquire_token` delegates to `notebookutils.credentials.getToken(audience)`
 - no stored secret. Fabric documents `getToken` against a short, fixed set
@@ -38,7 +37,7 @@ Connection (documented as "the authentication method for the notebook
 run") is the Workspace Identity, which needs the tenant setting "Service
 principals can call Fabric public APIs" and the identity as Contributor on
 the workspace. Only in that mode do grants made to the workspace identity
-apply. Not yet exercised against a real workspace.
+apply.
 """
 
 from __future__ import annotations

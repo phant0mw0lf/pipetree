@@ -2,44 +2,8 @@
 
 A Databricks Asset Bundle that deploys `run_on_databricks.py` as a
 `spark_python_task`, running the same example pipeline as
-`examples/run_demo.py`, against a real Databricks cluster and Unity
-Catalog instead of a laptop.
-
-**Status: not verified against a real workspace yet.** This is Phase C's
-starting point - built and unit-tested against mocked `dbutils`
-(`tests/platform/test_databricks.py`), but nothing here has actually run
-on Databricks. Treat it as a first draft to deploy and fix, not a
-finished thing.
-
-## What to check first
-
-- **`dbutils` availability.** `run_on_databricks.py` assumes `dbutils` is
-  injected into the global namespace for a `spark_python_task`, the same
-  way it is in a notebook. If that's wrong, the fix is probably
-  `from pyspark.dbutils import DBUtils; dbutils = DBUtils(spark)` instead.
-- **The Databricks Runtime version** in `databricks.yml`
-  (`spark_version: 15.4.x-scala2.12`) - pin to whatever's current in your
-  workspace.
-- **The node type** (`Standard_DS3_v2`) is an Azure VM SKU - swap for an
-  AWS/GCP equivalent if you're not on Azure.
-- **The secret scope.** `secret_scope` defaults to `pipetree` and must be
-  **Unity-Catalog-backed**, not a legacy Azure-Key-Vault-backed scope:
-  ```bash
-  databricks secrets create-scope --scope pipetree --scope-backend-type UC
-  ```
-  The example pipeline doesn't actually need a secret (its one source is
-  a local CSV), so this only matters once a real system config uses one.
-  To read Key Vault directly instead of a secret scope at all - via an
-  Access Connector for Azure Databricks - pass `secret_resolver` to
-  `DatabricksPlatform` in `run_on_databricks.py` instead of
-  `dbutils`/`secret_scope`.
-- **Unity Catalog naming.** `DatabricksPlatform.qualify_table_name()`
-  exists (`catalog.schema.table`) but isn't force-applied to every write -
-  `run_on_databricks.py` doesn't call `spark.catalog.setCurrentCatalog()`
-  or `USE CATALOG` either. Do one of those first, so the pipeline's plain
-  `schema.table` names resolve against the right catalog by default; see
-  `NOTES-for-blog.md` for why this seemed better than rewriting every
-  table reference.
+`examples/run_demo.py`, against a Databricks cluster and Unity Catalog
+instead of a laptop.
 
 ## Deploy and run
 
@@ -50,14 +14,40 @@ databricks bundle run pipetree_example -t dev
 ```
 
 No `workspace.host` is set in `databricks.yml` - it relies on your
-`databricks` CLI's default auth profile. Run `databricks auth login`
-first if you haven't authenticated this machine yet.
+`databricks` CLI's default auth profile. Run `databricks auth login` first
+if you haven't authenticated this machine yet.
 
-## Comparing against the local run
+The job takes these parameters (bundle variables): `catalog` (default
+`main`), `key_vault_url` and `key_vault_credential` (both empty by default).
 
-Same pipeline, same fault-free path (no `FaultInjectingAdapter` here -
-that's for the local demo only). The interesting comparison for part 3
-isn't whether it works, it's *what's different*: cluster startup time,
-Unity Catalog vs. a local Hive metastore, real distributed execution vs.
-`local[*]`. Notes on that comparison belong in part 3, once this has
-actually run.
+## Secrets from Key Vault
+
+`{secret: name}` values are read from Azure Key Vault with the identity of a
+Unity Catalog service credential. Nothing is stored in Databricks. The
+example pipeline needs no secret, so skip this until a system config uses
+one. Provision once:
+
+1. Create an Access Connector for Azure Databricks (a managed identity).
+2. Grant its identity `Key Vault Secrets User` on the vault.
+3. Create a Unity Catalog service credential from the connector.
+4. Grant `ACCESS` on the credential to the principal that runs the job.
+
+Then set `key_vault_url` (for example `https://my-vault.vault.azure.net`) and
+`key_vault_credential` (the credential's name). Secret names must be Key
+Vault names: letters, digits and hyphens. Service credentials need
+Databricks Runtime 16.2+ (or 15.4 LTS), Python only, on the driver; they are
+not available on SQL warehouses. `azure-keyvault-secrets` (the `azure`
+extra) must be installed on the cluster.
+
+## Notes
+
+- **`dbutils`** is taken from the globals of the `spark_python_task`, as in
+  a notebook. `DBUtils(spark)` from `pyspark.dbutils` is the alternative.
+- **Runtime and node type** in `databricks.yml` are examples
+  (`15.4.x-scala2.12`, `Standard_DS3_v2`, an Azure VM SKU): use values
+  available in your workspace and cloud.
+- **Unity Catalog naming.** `DatabricksPlatform.qualify_table_name()` exists
+  (`catalog.schema.table`) but isn't applied to every write, and
+  `run_on_databricks.py` doesn't call `USE CATALOG`. Set the default catalog
+  (`spark.catalog.setCurrentCatalog(...)` or `USE CATALOG`) so the pipeline's
+  plain `schema.table` names resolve against the right catalog.

@@ -2,12 +2,12 @@
 
 Run as a `spark_python_task` via the Databricks Asset Bundle in this
 directory (`databricks bundle deploy && databricks bundle run
-pipetree_example`) - see README.md for the exact commands and, more
-importantly, what in here still needs checking against a real workspace.
-Not verified against one yet; this is Phase C's starting point.
+pipetree_example`) - see README.md for the exact commands and the Key Vault
+setup.
 
-Parameters (positional, matching databricks.yml): catalog, secret_scope,
-config_path.
+Parameters (positional, matching databricks.yml): catalog, key_vault_url,
+key_vault_credential. The last two are optional: leave them empty for a
+pipeline without `{secret: ...}` values.
 """
 
 from __future__ import annotations
@@ -24,10 +24,11 @@ from pipetree.model import PipelineConfig
 from pipetree.platform.databricks import DatabricksPlatform
 
 CATALOG = sys.argv[1] if len(sys.argv) > 1 else "main"
-SECRET_SCOPE = sys.argv[2] if len(sys.argv) > 2 else "pipetree"
+KEY_VAULT_URL = (sys.argv[2] if len(sys.argv) > 2 else "") or None
+KEY_VAULT_CREDENTIAL = (sys.argv[3] if len(sys.argv) > 3 else "") or None
 CONFIG_PATH = (
-    Path(sys.argv[3])
-    if len(sys.argv) > 3
+    Path(sys.argv[4])
+    if len(sys.argv) > 4
     else Path(__file__).resolve().parent.parent / "pipeline.yaml"
 )
 
@@ -50,7 +51,12 @@ def main() -> int:
     raw = load_config(CONFIG_PATH)
     config = PipelineConfig.from_validated_raw(raw)
 
-    platform = DatabricksPlatform(dbutils=dbutils, catalog=CATALOG, secret_scope=SECRET_SCOPE)
+    platform = DatabricksPlatform(
+        dbutils=dbutils,
+        catalog=CATALOG,
+        key_vault_url=KEY_VAULT_URL,
+        key_vault_credential=KEY_VAULT_CREDENTIAL,
+    )
     adapter = SparkAdapter(
         spark, systems=config.systems, base_dir=CONFIG_PATH.parent, platform=platform
     )

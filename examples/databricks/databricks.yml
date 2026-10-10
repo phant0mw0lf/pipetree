@@ -1,11 +1,6 @@
 # Databricks Asset Bundle for the pipetree example pipeline.
 #
-# NOT VERIFIED against a real workspace yet - this is Phase C's starting
-# point. See README.md for what to check before trusting it, in
-# particular: the Databricks Runtime version below (pin to whatever's
-# current when you deploy), the node type (an Azure SKU - swap for AWS/GCP
-# as needed), and whether `dbutils` is really available in a
-# spark_python_task the way run_on_databricks.py assumes.
+# Setup and parameters: see README.md.
 #
 # Deploy: databricks bundle deploy -t dev
 # Run:    databricks bundle run pipetree_example -t dev
@@ -17,15 +12,18 @@ variables:
   catalog:
     description: Unity Catalog catalog to write the example tables into
     default: main
-  secret_scope:
+  key_vault_url:
     description: >
-      A Unity-Catalog-backed secret scope (create with
-      `databricks secrets create-scope --scope pipetree --scope-backend-type UC`)
-      - not a legacy Azure-Key-Vault-backed one. Unused by the example
-      pipeline itself (its one source is a local CSV, no secrets), but
-      wired through so a real system config can add one without code
-      changes.
-    default: pipetree
+      Key Vault to read `{secret: name}` values from, for example
+      https://my-vault.vault.azure.net. Empty for a pipeline without secrets
+      (the example's one source is a local CSV).
+    default: ""
+  key_vault_credential:
+    description: >
+      Name of the Unity Catalog service credential (created from an Access
+      Connector for Azure Databricks) that reads the vault. Empty with an
+      empty key_vault_url.
+    default: ""
 
 artifacts:
   pipetree:
@@ -40,8 +38,8 @@ resources:
       tasks:
         - task_key: run_pipeline
           new_cluster:
-            # Pin to whatever's current when you deploy - this one is a
-            # placeholder, not verified.
+            # Pin to a runtime available in your workspace. Service
+            # credentials need 16.2+ (or 15.4 LTS).
             spark_version: "15.4.x-scala2.12"
             node_type_id: "Standard_DS3_v2" # Azure SKU; swap for your cloud
             num_workers: 0 # single-node is enough for the example's data
@@ -54,7 +52,8 @@ resources:
             # relative path parameter here would not be.
             parameters:
               - "${var.catalog}"
-              - "${var.secret_scope}"
+              - "${var.key_vault_url}"
+              - "${var.key_vault_credential}"
           libraries:
             - whl: ../../dist/*.whl
 
