@@ -4,6 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # A new release waits seven days before it is proposed: tags and releases
+    # of packages and actions can be moved or yanked shortly after publication.
+    # Security updates are not delayed by the cooldown.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "build"
     groups:
@@ -22,6 +27,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # A new release waits seven days before it is proposed: tags and releases
+    # of packages and actions can be moved or yanked shortly after publication.
+    # Security updates are not delayed by the cooldown.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     groups:
