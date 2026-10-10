@@ -55,8 +55,11 @@ Pull requests run these jobs (`.github/workflows/ci.yml`):
   formatting and type errors show up within a few minutes.
 - `tests`: the full test suite with coverage, run in parallel with
   `pytest-xdist` (`-n 4`; every worker has its own local Spark session). It
-  uses the default of 25 conformance seeds per strategy plus the fixed
-  regression corpus. It is skipped when a pull request only changes files the
+  runs the generated conformance cases with 25 seeds per strategy when the pull
+  request touches the merge machinery (`src/pipetree/adapters/`,
+  `src/pipetree/testing/`, `tests/merge_conformance/`, `pyproject.toml`,
+  `uv.lock`, `tests/conftest.py`, `ci.yml`) and with 5 seeds otherwise; the
+  fixed regression corpus and the hand-built cases always run. It is skipped when a pull request only changes files the
   tests do not read (markdown, images, notebooks, `docs/`, other workflows, ...).
   A push to `main` always runs it. Coverage goes to Codecov. It starts after
   `lint` and not at all if `lint` failed, and stops after 5 failed tests
