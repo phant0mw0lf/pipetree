@@ -35,7 +35,7 @@ PIPETREE_CONFORMANCE_SEEDS=0 uv run pytest     # fast run
 PIPETREE_CONFORMANCE_SEEDS=100 uv run pytest   # more thorough
 ```
 
-CI runs the same checks on every pull request.
+CI runs the same checks on every pull request (see [CI](#ci)).
 
 Workflow files are audited with [zizmor](https://docs.zizmor.sh/) (the `zizmor`
 check). To run it locally:
@@ -46,6 +46,36 @@ GITHUB_TOKEN=$(gh auth token) uvx zizmor .github
 
 Fix findings where possible; if one is intentional, add an inline
 `# zizmor: ignore[rule]` with a comment explaining why.
+
+## CI
+
+Pull requests run these jobs (`.github/workflows/ci.yml`):
+
+- `lint`: `ruff check`, `ruff format --check` and `pyright`. It is quick, so
+  formatting and type errors show up within a few minutes.
+- `tests`: the full test suite with coverage, run in parallel with
+  `pytest-xdist` (`-n 4`; every worker has its own local Spark session). It
+  uses the default of 25 conformance seeds per strategy plus the fixed
+  regression corpus. It is skipped when a pull request only changes files the
+  tests do not read (markdown, images, notebooks, `docs/`, other workflows, ...).
+  A push to `main` always runs it. Coverage goes to Codecov.
+- `test`: a final job that passes when `lint` and `tests` passed (or `tests`
+  was skipped because no code changed). It always runs, so the required check
+  has a result on every pull request.
+
+The required status checks are `test`, `pr-title` and `zizmor`. Codecov adds
+`codecov/patch` (new lines should be at least 80% covered) and
+`codecov/project` (total coverage must not drop by more than 1%).
+
+The full merge-conformance run (300 seeds per strategy, all four strategies)
+is too slow for every pull request. The `Conformance` workflow
+(`.github/workflows/conformance.yml`) runs it every night and can be started
+by hand from the Actions tab with the `seeds` input, or called from another
+workflow, for example before a release. To run it locally:
+
+```bash
+PIPETREE_CONFORMANCE_SEEDS=300 uv run pytest tests/merge_conformance -n 4
+```
 
 ## Pull requests
 

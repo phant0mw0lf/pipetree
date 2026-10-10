@@ -1,5 +1,8 @@
 # pipetree
 
+[![CI](https://github.com/phant0mw0lf/pipetree/actions/workflows/ci.yml/badge.svg)](https://github.com/phant0mw0lf/pipetree/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/phant0mw0lf/pipetree/graph/badge.svg)](https://codecov.io/gh/phant0mw0lf/pipetree)
+
 Metadata-driven pipeline orchestration: describe *what* to move in declarative
 YAML, and a small package turns it into a runnable dependency tree.
 
