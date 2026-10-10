@@ -16,6 +16,8 @@ AUTO CDC translation. Phase C (Databricks/Fabric) is **not yet verified
 against a real workspace** - see `examples/databricks/README.md` and
 `examples/fabric/README.md`. See `docs/build-order.md` for what's left.
 
+![pipetree's dependency graph after a run: seven tables in four waves, all succeeded](docs/images/graph-clean.png)
+
 ## Prerequisites
 
 - Python ≥ 3.11 (developed against 3.12) and [`uv`](https://docs.astral.sh/uv/).
@@ -47,6 +49,13 @@ uv run python examples/run_demo.py
 ```
 
 A captured transcript of that run, annotated, is in `examples/demo-run.txt`.
+
+To see what pipetree reports when the data misbehaves (duplicate rows, a
+NULL key, a new column, a failing table), run
+`uv run python examples/with_problems/run.py` - see
+[`examples/with_problems/`](examples/with_problems/README.md). Or open
+[`examples/quickstart.ipynb`](examples/quickstart.ipynb), a notebook with
+the outputs of both runs.
 
 `uv run pipetree validate --config <path>` checks a config without running
 anything - useful in CI before a deploy.
@@ -108,6 +117,12 @@ drift still succeeds, so each of those becomes a *note* on the table:
   `null_keys_dropped` and `schema_changes`. A `_meta.pipeline_run_log`
   created before `null_keys_dropped` existed gains the column on the next
   write.
+
+![the graph of a run with notes: three tables carry a warning badge, gold.dim_customer failed and gold.fact_sales is upstream_failed, and the digest lists the notes](docs/images/graph-with-notes.png)
+
+The run above is `examples/with_problems`: duplicate rows, a NULL key and a
+new column each leave a `⚠` badge and a line in the digest, while one table
+fails and takes its dependent with it.
 
 **Render it yourself** - a pure function, deterministic for the same input:
 
@@ -396,6 +411,7 @@ uv run pytest              # full suite
 uv run pytest -m "not spark"  # skip the JVM-backed integration tests
 uv run ruff check . && uv run ruff format --check .
 uv run pyright
+uv run python examples/make_screenshots.py   # regenerate docs/images/*.png (needs Chromium or Chrome)
 ```
 
 ## License
