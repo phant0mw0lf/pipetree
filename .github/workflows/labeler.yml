@@ -1,0 +1,23 @@
+name: Labeler
+
+# Labels pull requests by the paths they change (see .github/labeler.yml).
+# pull_request_target gives fork PRs a token that can write labels. This is
+# safe because the workflow never checks out or runs code from the PR: the
+# labeler reads its configuration from the base branch and only looks at the
+# list of changed file names.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  labeler:
+    name: Label by changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
