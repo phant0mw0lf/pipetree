@@ -26,6 +26,19 @@ against a real workspace** - see `examples/databricks/README.md` and
   export PATH="$JAVA_HOME/bin:$PATH"
   ```
 
+## Installation
+
+```bash
+pip install pipetree-meta            # core: config loader, graph, executor, CLI
+pip install "pipetree-meta[spark]"   # + PySpark and Delta Lake for local runs
+pip install "pipetree-meta[azure]"   # + azure-identity for secretless auth
+```
+
+The distribution is named `pipetree-meta`; the import package and the CLI
+command are `pipetree`. An unrelated, abandoned project called `pipetree`
+(2016) also exists on PyPI and also installs a `pipetree` package. The two
+must not be installed into the same environment.
+
 ## Quick start
 
 ```bash
