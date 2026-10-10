@@ -58,7 +58,11 @@ Pull requests run these jobs (`.github/workflows/ci.yml`):
   uses the default of 25 conformance seeds per strategy plus the fixed
   regression corpus. It is skipped when a pull request only changes files the
   tests do not read (markdown, images, notebooks, `docs/`, other workflows, ...).
-  A push to `main` always runs it. Coverage goes to Codecov.
+  A push to `main` always runs it. Coverage goes to Codecov. It starts after
+  `lint` and not at all if `lint` failed, and stops after 5 failed tests
+  (`--maxfail=5`), so a broken change fails fast. The Spark tests must run in
+  CI: `PIPETREE_REQUIRE_SPARK=1` makes a missing Spark session fail instead of
+  skip (set it locally to check the same).
 - `test`: a final job that passes when `lint` and `tests` passed (or `tests`
   was skipped because no code changed). It always runs, so the required check
   has a result on every pull request.

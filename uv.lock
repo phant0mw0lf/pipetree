@@ -1044,6 +1044,7 @@ spark = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "filelock" },
     { name = "pre-commit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1066,6 +1067,7 @@ provides-extras = ["spark", "azure"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "filelock", specifier = ">=4.1.0" },
     { name = "pre-commit", specifier = ">=4.0" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8.3" },

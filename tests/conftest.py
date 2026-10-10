@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import os
 
+import filelock
 import pytest
 
 
@@ -31,6 +33,23 @@ def _xdist_session_options(worker_id: str) -> dict:
     return {"master": "local[2]", "conf": {"spark.sql.shuffle.partitions": "4"}}
 
 
+@contextlib.contextmanager
+def _startup_lock(tmp_path_factory, worker_id: str):
+    """Start the workers' sessions one at a time.
+
+    `configure_spark_with_delta_pip` makes Spark resolve the Delta jars with Ivy
+    into one shared cache (~/.ivy2). On a cold cache several workers downloading
+    the same jars at once corrupt each other's files ("Downloaded file size (0)
+    doesn't match", JAVA_GATEWAY_EXITED). The first worker fills the cache, the
+    others find it warm. Starting a session takes seconds, so serialising is cheap.
+    """
+    if worker_id == "master":
+        yield
+        return
+    with filelock.FileLock(str(tmp_path_factory.getbasetemp().parent / "spark-start.lock")):
+        yield
+
+
 def _session_unavailable(exc: Exception) -> None:
     """Skip (local default) or fail (PIPETREE_REQUIRE_SPARK) when no session starts."""
     message = f"could not start a local Spark session (JVM missing?): {exc!r}"
@@ -53,11 +72,12 @@ def spark(tmp_path_factory, worker_id):
     os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
     warehouse_dir = tmp_path_factory.mktemp(f"spark-warehouse-{worker_id}")
     try:
-        session = build_local_session(
-            app_name="pipetree-tests",
-            warehouse_dir=str(warehouse_dir),
-            **_xdist_session_options(worker_id),
-        )
+        with _startup_lock(tmp_path_factory, worker_id):
+            session = build_local_session(
+                app_name="pipetree-tests",
+                warehouse_dir=str(warehouse_dir),
+                **_xdist_session_options(worker_id),
+            )
     except Exception as exc:  # environment-dependent
         _session_unavailable(exc)
         return

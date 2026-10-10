@@ -55,6 +55,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # No --maxfail: the nightly run should collect every divergence, not stop at
+      # the first few. There is no matrix, so no fail-fast setting applies.
       - name: Conformance (all four strategies)
         env:
           SEEDS: ${{ inputs.seeds || '300' }}

@@ -58,6 +58,7 @@ dev = [
     "pre-commit>=4.0",
     "twine>=6.0",
     "pytest-xdist>=3.8.0",
+    "filelock>=4.1.0",
 ]
 
 [build-system]
