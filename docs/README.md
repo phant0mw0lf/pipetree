@@ -28,25 +28,25 @@ Field descriptions are the `description=` of the pydantic fields. `tests/test_do
 
 A fenced block marked `yaml validate` is a complete config and must pass the config loader (`tests/test_docs_examples.py`). Use plain `yaml` for fragments.
 
-## Hosting: Cloudflare Pages
+## Hosting: Cloudflare (Workers with static assets)
 
-Cloudflare builds and deploys the site from the GitHub repository. `.github/workflows/docs.yml` (`docs-build`) only checks that a change builds and that all internal links are valid.
+Cloudflare builds and deploys the site from the GitHub repository. `.github/workflows/docs.yml` (`docs-build`) only checks that a change builds and that all internal links are valid. `docs/wrangler.jsonc` tells Cloudflare to serve `dist/`.
 
-Settings when creating the project (Workers & Pages, Create, Pages, Connect to Git):
+Settings when creating the project (Workers & Pages, Create, Import a repository):
 
 | Setting | Value |
 | --- | --- |
 | Repository | `phant0mw0lf/pipetree` |
-| Project name | `pipetree` |
+| Project name | `pipetree` (must equal `name` in `wrangler.jsonc`) |
 | Production branch | `main` |
 | Root directory | `docs` |
 | Build command | `npm ci && npm run build` |
-| Build output directory | `dist` |
-| Environment variable | `NODE_VERSION` = `24` (also pinned in `.nvmrc` and `engines`) |
-| Preview deployments | on, for all branches and pull requests |
-| Custom domain | `pipetree.dev` (Custom domains, Set up a domain) |
+| Deploy command | `npx wrangler deploy` |
+| Non-production branch deploy command | `npx wrangler preview` |
+| Node version | from `.nvmrc` (24); optional variable `NODE_VERSION` = `24` |
+| Custom domain | `pipetree.dev` (Settings, Domains & Routes, Add, Custom domain) |
 
-`SITE_URL` already defaults to `https://pipetree.dev` and `BASE_PATH` to `/`, so no other variable is needed. The `pipetree.pages.dev` address keeps working as the fallback and hosts the previews. A redirect from `www.pipetree.dev` is not possible in `_redirects` (it cannot redirect across hosts): add it as a Redirect Rule in Cloudflare if wanted.
+`SITE_URL` already defaults to `https://pipetree.dev` and `BASE_PATH` to `/`, so no other variable is needed. The `*.workers.dev` address keeps working as the fallback. A redirect from `www.pipetree.dev` is not possible in `_redirects` (it cannot redirect across hosts): add it as a Redirect Rule in Cloudflare if wanted.
 
 The Cloudflare build runs Node only, with no Python. That works because the generated reference files and `public/pipetree.schema.json` are committed.
 
