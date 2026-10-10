@@ -84,6 +84,14 @@ workflow, for example before a release. To run it locally:
 PIPETREE_CONFORMANCE_SEEDS=300 uv run pytest tests/merge_conformance -n 4
 ```
 
+## Documentation
+
+The documentation site lives in `docs/` (Astro Starlight, see `docs/README.md`). The YAML and CLI
+reference pages and `docs/public/pipetree.schema.json` are generated from the code: after changing
+`src/pipetree/model.py` or `src/pipetree/cli.py`, run
+`uv run python docs/scripts/gen_reference.py` and commit the result. A test fails when they are out
+of date. Complete YAML examples in the pages are marked `yaml validate` and are checked by a test.
+
 ## Pull requests
 
 - Keep a PR focused on one change and add or update tests for behaviour changes.

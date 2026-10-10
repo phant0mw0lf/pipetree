@@ -13,6 +13,8 @@ This is the companion package to the
 series. Part 1 covers the design and the YAML schema; part 2 covers the
 executor this repo implements (multithreading, retries, failure handling).
 
+Documentation: https://pipetree.dev
+
 Status: all six phases of the original build order are done - core (part
 2), graph features, the platform seam, source readers, schema drift, and
 AUTO CDC translation. Phase C (Databricks/Fabric) is **not yet verified

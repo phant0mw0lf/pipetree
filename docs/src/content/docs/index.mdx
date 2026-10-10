@@ -1,0 +1,53 @@
+---
+title: pipetree
+description: Metadata-driven pipeline orchestration. YAML in, a runnable dependency tree out.
+template: splash
+hero:
+  tagline: YAML in, a runnable dependency tree out.
+  actions:
+    - text: Get started
+      link: getting-started/quickstart/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/phant0mw0lf/pipetree
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import graph from '../../assets/graph-clean.png';
+
+<CardGrid>
+  <Card title="Config over code" icon="document">
+    One YAML block per table: source or logic, key, merge strategy.
+  </Card>
+  <Card title="Dependency tree" icon="seti:json">
+    Parents are read from your SQL and PySpark files. A table starts when its parents have succeeded.
+  </Card>
+  <Card title="Tested merge strategies" icon="approve-check">
+    scd1, scd2, replace and append, checked against a reference model on generated histories.
+  </Card>
+  <Card title="Databricks and Fabric" icon="rocket">
+    The same config runs on local Spark, Databricks and Fabric.
+  </Card>
+</CardGrid>
+
+```yaml validate
+systems:
+  crm:
+    type: csv
+    path: data/customer.csv
+bronze:
+  tables:
+    customer:
+      source: { system: crm, object: account }
+      business_key: [accountid]
+      strategy: scd1
+```
+
+<Image src={graph} alt="pipetree's dependency graph after a run: seven tables in four waves, all succeeded" />
+
+```bash
+pip install "pipetree-meta[spark]"
+```
