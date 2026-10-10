@@ -25,12 +25,12 @@ from pipetree.adapters.spark.session import build_local_session  # noqa: E402
 
 def _xdist_session_options(worker_id: str) -> dict:
     """Without xdist the session is the default `local[*]`. With N workers on one
-    machine, N sessions of `local[*]` each oversubscribe every core (measured:
-    `-n 4` gave 1.8x with `local[*]` and 2.7x with two threads per session), so a
-    worker gets two task threads and a small shuffle."""
+    machine, N sessions of `local[*]` each oversubscribe every core (measured on a
+    16-core machine: `-n 4` gave 1.8x with `local[*]` and 2.7x with two threads per
+    session), so a worker gets few task threads and a small shuffle."""
     if worker_id == "master":
         return {}
-    return {"master": "local[2]", "conf": {"spark.sql.shuffle.partitions": "4"}}
+    return {"master": "local[1]", "conf": {"spark.sql.shuffle.partitions": "4"}}
 
 
 @contextlib.contextmanager

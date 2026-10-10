@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      merge: ${{ steps.filter.outputs.merge }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,11 +37,13 @@ jobs:
           set -eu
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "merge=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           changed="$(git diff --name-only "$BASE_SHA" HEAD)"
           code=false
+          merge=false
           while IFS= read -r file; do
             case "$file" in
               # Files the tests and the type/lint checks never read. Anything
@@ -57,8 +60,15 @@ jobs:
               .github/*) ;;
               *) code=true ;;
             esac
+            # The merge machinery: the generated conformance cases only need the
+            # larger seed set when one of these changed.
+            case "$file" in
+              src/pipetree/adapters/*|src/pipetree/testing/*|tests/merge_conformance/*) merge=true ;;
+              pyproject.toml|uv.lock|tests/conftest.py|.github/workflows/ci.yml) merge=true ;;
+            esac
           done <<< "$changed"
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "merge=$merge" >> "$GITHUB_OUTPUT"
 
   lint:
     name: lint
@@ -125,6 +135,10 @@ jobs:
       - name: Test
         env:
           PIPETREE_REQUIRE_SPARK: "1"
+          # 25 seeds per strategy when the merge machinery changed, else 5; the
+          # nightly Conformance workflow runs 300. The fixed regression corpus
+          # and the hand-built cases run regardless.
+          PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && '25' || '5' }}
         run: uv run pytest --cov --cov-report=xml -n 4 --maxfail=5 -rs --durations=25 -v
 
       # Runs only when the tests ran (this job is skipped otherwise). Pull
