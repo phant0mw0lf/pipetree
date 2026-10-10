@@ -117,8 +117,8 @@ def main() -> int:
     chromium = find_chromium()
     if chromium is None:
         print(
-            "No Chromium found. Install one (brew install --cask chromium), install Chrome, or point the "
-            "CHROMIUM environment variable at a Chromium/Chrome binary.",
+            "No Chromium found. Install one (brew install --cask chromium) or Chrome, or "
+            "point the CHROMIUM environment variable at a Chromium/Chrome binary.",
             file=sys.stderr,
         )
         return 1
