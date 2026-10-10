@@ -4,7 +4,19 @@ import os
 
 import pytest
 
-pyspark = pytest.importorskip("pyspark")
+
+def _require_spark() -> bool:
+    """CI sets PIPETREE_REQUIRE_SPARK=1: a Spark test that cannot run must fail,
+    never skip silently."""
+    return os.environ.get("PIPETREE_REQUIRE_SPARK", "") not in ("", "0")
+
+
+try:
+    import pyspark  # noqa: F401
+except ImportError:
+    if _require_spark():
+        pytest.exit("PIPETREE_REQUIRE_SPARK is set but pyspark is not installed", returncode=3)
+    pytest.skip("pyspark is not installed", allow_module_level=True)
 
 from pipetree.adapters.spark.session import build_local_session  # noqa: E402
 
@@ -17,6 +29,14 @@ def _xdist_session_options(worker_id: str) -> dict:
     if worker_id == "master":
         return {}
     return {"master": "local[2]", "conf": {"spark.sql.shuffle.partitions": "4"}}
+
+
+def _session_unavailable(exc: Exception) -> None:
+    """Skip (local default) or fail (PIPETREE_REQUIRE_SPARK) when no session starts."""
+    message = f"could not start a local Spark session (JVM missing?): {exc!r}"
+    if _require_spark():
+        pytest.fail(message, pytrace=False)
+    pytest.skip(message)
 
 
 @pytest.fixture(scope="session")
@@ -38,8 +58,8 @@ def spark(tmp_path_factory, worker_id):
             warehouse_dir=str(warehouse_dir),
             **_xdist_session_options(worker_id),
         )
-    except Exception as exc:  # pragma: no cover - environment-dependent
-        pytest.skip(f"could not start a local Spark session (JVM missing?): {exc}")
+    except Exception as exc:  # environment-dependent
+        _session_unavailable(exc)
         return
 
     yield session

@@ -58,8 +58,9 @@ jobs:
       - name: Conformance (all four strategies)
         env:
           SEEDS: ${{ inputs.seeds || '300' }}
+          PIPETREE_REQUIRE_SPARK: "1"
         run: |
           case "$SEEDS" in
             ''|*[!0-9]*) echo "seeds must be a non-negative integer, got '$SEEDS'" >&2; exit 1 ;;
           esac
-          PIPETREE_CONFORMANCE_SEEDS="$SEEDS" uv run pytest tests/merge_conformance -n 4 --durations=25 -v
+          PIPETREE_CONFORMANCE_SEEDS="$SEEDS" uv run pytest tests/merge_conformance -n 4 -rs --durations=25 -v

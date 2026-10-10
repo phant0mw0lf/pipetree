@@ -120,7 +120,9 @@ jobs:
       # Each xdist worker is its own process with its own local Spark session
       # (see tests/conftest.py).
       - name: Test
-        run: uv run pytest --cov --cov-report=xml -n 4 --durations=25 -v
+        env:
+          PIPETREE_REQUIRE_SPARK: "1"
+        run: uv run pytest --cov --cov-report=xml -n 4 -rs --durations=25 -v
 
       # Runs only when the tests ran (this job is skipped otherwise). Pull
       # requests from forks get no secret: the token is then empty and the action
