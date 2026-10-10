@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { pluginLanguageBadge } from 'expressive-code-language-badge';
 import starlightLinksValidator from 'starlight-links-validator';
 
 // Hosted on Cloudflare Pages at https://pipetree.dev, at the root (see docs/README.md).
@@ -30,6 +31,20 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: new URL('/og.png', site).href } },
       ],
+      expressiveCode: {
+        plugins: [pluginLanguageBadge()],
+        styleOverrides: {
+          languageBadge: {
+            fontSize: '0.65rem',
+            fontWeight: '600',
+            fontColor: 'var(--sl-color-gray-2)',
+            background: 'var(--sl-color-gray-6)',
+            borderColor: 'var(--sl-color-gray-5)',
+            borderWidth: '1px',
+            opacity: '0.9',
+          },
+        },
+      },
       plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
       sidebar: [
         { label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
