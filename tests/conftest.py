@@ -30,7 +30,15 @@ def _xdist_session_options(worker_id: str) -> dict:
     session), so a worker gets few task threads and a small shuffle."""
     if worker_id == "master":
         return {}
-    return {"master": "local[1]", "conf": {"spark.sql.shuffle.partitions": "4"}}
+    return {
+        "master": "local[2]",
+        "conf": {
+            "spark.sql.shuffle.partitions": "2",
+            "spark.sql.adaptive.enabled": "false",
+            # Delta reads its log with this many tasks per action (default 50).
+            "spark.databricks.delta.snapshotPartitions": "2",
+        },
+    }
 
 
 @contextlib.contextmanager
