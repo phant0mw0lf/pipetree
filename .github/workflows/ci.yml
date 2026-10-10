@@ -49,6 +49,9 @@ jobs:
               # (and the same under examples/with_problems), so those are code.
               *.md|*.png|*.jpg|*.jpeg|*.gif|*.svg|*.ipynb) ;;
               LICENSE|CODEOWNERS|.gitignore|cliff.toml|.pre-commit-config.yaml) ;;
+              # The documentation pages and the generated reference are read by
+              # tests/test_docs_examples.py and tests/test_docs_reference.py.
+              docs/src/content/*|docs/scripts/*|docs/public/pipetree.schema.json) code=true ;;
               docs/*|examples/demo-run.txt|examples/databricks/*|examples/fabric/*) ;;
               .github/workflows/ci.yml) code=true ;;
               .github/*) ;;
