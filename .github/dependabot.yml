@@ -1,0 +1,39 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    # A new release waits seven days before it is proposed: tags and releases
+    # of packages and actions can be moved or yanked shortly after publication.
+    # Security updates are not delayed by the cooldown.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build"
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+    ignore:
+      # The merge behaviour tests are written against a specific Spark/Delta
+      # line (see the version ranges in pyproject.toml). A major upgrade needs
+      # a deliberate migration, so only minor and patch updates are proposed.
+      - dependency-name: "pyspark"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "delta-spark"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # A new release waits seven days before it is proposed: tags and releases
+    # of packages and actions can be moved or yanked shortly after publication.
+    # Security updates are not delayed by the cooldown.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]

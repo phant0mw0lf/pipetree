@@ -28,6 +28,16 @@ against a real workspace** - see `examples/databricks/README.md` and
   export PATH="$JAVA_HOME/bin:$PATH"
   ```
 
+## Installation
+
+```bash
+pip install pipetree-meta            # core: config loader, graph, executor, CLI
+pip install "pipetree-meta[spark]"   # + PySpark and Delta Lake for local runs
+pip install "pipetree-meta[azure]"   # + azure-identity for secretless auth
+```
+
+The import package and the CLI command are `pipetree`.
+
 ## Quick start
 
 ```bash
