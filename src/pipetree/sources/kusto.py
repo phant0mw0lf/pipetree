@@ -38,9 +38,8 @@ outlive its token. (The connector's `tokenProviderCallbackClasspath`
 option, a JVM callback called per request, is the refreshable
 alternative; it isn't wired up here.)
 
-**Still unverified** without a real cluster: an end-to-end read (connector
-on the classpath, the token's audience accepted by the cluster, the
-principal's Viewer grant), and large reads: when the connector estimates
+Reads need the connector on the classpath, a token audience the cluster
+accepts and a Viewer grant for the principal. For large reads: when the connector estimates
 a query exceeds Kusto's query limits it switches to distributed mode,
 which exports to blob storage - storage from the Kusto ingest service
 unless `transientStorage` is set, which the connector's docs advise

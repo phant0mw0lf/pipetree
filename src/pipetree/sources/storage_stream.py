@@ -17,10 +17,8 @@ run's newly-arrived batch - the checkpoint, untouched between runs, is
 what remembers what's already been seen), then read back as an ordinary
 batch DataFrame.
 
-**The Auto Loader branch is unverified against a real workspace** -
-written against Databricks' documented `cloudFiles` options, not tested
-against a real storage account. The non-Databricks path is tested for
-real, locally.
+On Databricks the stream is read with Auto Loader (`cloudFiles`); elsewhere
+with plain file-format streaming.
 """
 
 from __future__ import annotations
