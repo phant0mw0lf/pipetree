@@ -65,6 +65,27 @@ Fix findings where possible; if one is intentional, add an inline
   `ci`, `chore`, `revert`. The scope is optional. Append `!` to the type for a
   breaking change (`feat!: ...`). The `pr-title` check enforces this.
 
+## Labels
+
+Issues and pull requests use these label groups:
+
+- **Type** (blue): `bug`, `enhancement`, `documentation`, `question`, plus
+  `good first issue`, `help wanted`, `wontfix` and `duplicate`.
+- **Area** (grey, `area: ...`): the part of the code a change touches, such as
+  `area: merge` or `area: executor`.
+- **Platform** (green, `platform: ...`): `databricks`, `fabric` or `local`.
+- **Release impact** (red): `breaking change` and `needs docs`.
+- **Triage** (yellow): `needs triage`, `needs reproduction` and `blocked`.
+- **Infrastructure**: `dependencies`, `ci` and `release`.
+
+You do not need to set labels on a pull request. Area and platform labels are
+added from the files you change, and the type label (and `breaking change`) from
+the PR title. New issues get `needs triage` until a maintainer has looked at them.
+
+The list of labels lives in `.github/labels.yml`, which is authoritative: when
+a change to it is merged to `main`, the repository labels are synced to match,
+and labels that are not in the file are deleted.
+
 ## Releases (maintainers)
 
 Versions follow [Semantic Versioning](https://semver.org/). While the project

@@ -1,0 +1,74 @@
+name: PR type label
+
+# Sets a type label from the Conventional Commit prefix of the PR title, and
+# "breaking change" when the title has "!" before the colon. When the title is
+# edited, the labels that came from the old title are removed first.
+#
+# The title is read from the event payload inside the script and never put
+# into a shell command. No code from the PR is checked out, which is why
+# the pull_request_target trigger is acceptable here (same reasoning as in
+# pr-title.yml); it is needed so that PRs from forks get their labels.
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
+    types: [opened, edited, reopened]
+
+permissions: {}
+
+jobs:
+  type-label:
+    name: Label by title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            // labels:begin
+            const TYPE_LABELS = {
+              feat: 'enhancement',
+              fix: 'bug',
+              docs: 'documentation',
+              ci: 'ci',
+              build: 'ci',
+              release: 'release',
+            };
+            const RELEASE_SCOPE_LABEL = 'release';
+            const BREAKING_LABEL = 'breaking change';
+            // labels:end
+
+            const labelsFor = (title) => {
+              const match = /^(\w+)(?:\(([^)]*)\))?(!)?:/.exec(title || '');
+              if (!match) return [];
+              const [, type, scope, bang] = match;
+              const labels = [];
+              if (type === 'chore' && scope && scope.toLowerCase() === 'release') {
+                labels.push(RELEASE_SCOPE_LABEL);
+              } else if (Object.hasOwn(TYPE_LABELS, type)) {
+                labels.push(TYPE_LABELS[type]);
+              }
+              if (bang) labels.push(BREAKING_LABEL);
+              return labels;
+            };
+
+            const pr = context.payload.pull_request;
+            const wanted = labelsFor(pr.title);
+            const previousTitle = context.payload.changes?.title?.from;
+            const stale = previousTitle === undefined
+              ? []
+              : labelsFor(previousTitle).filter((name) => !wanted.includes(name));
+
+            const { owner, repo } = context.repo;
+            const issue_number = pr.number;
+
+            for (const name of stale) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            if (wanted.length > 0) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: wanted });
+            }

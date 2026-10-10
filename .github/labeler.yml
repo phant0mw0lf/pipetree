@@ -1,0 +1,76 @@
+# Path based labels, applied by .github/workflows/labeler.yml.
+# Every label named here must exist in .github/labels.yml.
+
+"area: merge":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/adapters/spark/merge.py
+          - src/pipetree/adapters/*/merge*
+
+"area: graph":
+  - changed-files:
+      - any-glob-to-any-file: src/pipetree/graph/**
+
+"area: executor":
+  - changed-files:
+      - any-glob-to-any-file: src/pipetree/executor/**
+
+"area: sources":
+  - changed-files:
+      - any-glob-to-any-file: src/pipetree/sources/**
+
+"area: runlog":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/runlog/**
+          - src/pipetree/adapters/*/runlog_writer.py
+
+"area: platform":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/platform/**
+          - examples/databricks/**
+          - examples/fabric/**
+
+"area: config":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/config/**
+          - src/pipetree/schema/**
+          - src/pipetree/model.py
+
+"area: testing":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/testing/**
+          - tests/merge_conformance/**
+
+"area: declarative":
+  - changed-files:
+      - any-glob-to-any-file: src/pipetree/declarative/**
+
+"platform: databricks":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/platform/databricks.py
+          - examples/databricks/**
+
+"platform: fabric":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/pipetree/platform/fabric.py
+          - examples/fabric/**
+
+"platform: local":
+  - changed-files:
+      - any-glob-to-any-file: src/pipetree/platform/local.py
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: .github/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - docs/**

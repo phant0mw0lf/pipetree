@@ -1,0 +1,116 @@
+# Single source of truth for the repository labels.
+# The "Sync labels" workflow applies this file on every push to main that
+# changes it: labels listed here are created or updated, and labels that are
+# not listed are deleted. Edit this file, not the labels in the GitHub UI.
+
+- name: "bug"
+  color: "1d76db"
+  description: "Something does not work as documented"
+
+- name: "enhancement"
+  color: "1d76db"
+  description: "New feature or improvement"
+
+- name: "documentation"
+  color: "1d76db"
+  description: "Improvements or additions to documentation"
+
+- name: "question"
+  color: "1d76db"
+  description: "Further information is requested"
+
+- name: "good first issue"
+  color: "1d76db"
+  description: "Good for newcomers"
+
+- name: "help wanted"
+  color: "1d76db"
+  description: "Extra attention is needed"
+
+- name: "wontfix"
+  color: "1d76db"
+  description: "This will not be worked on"
+
+- name: "duplicate"
+  color: "1d76db"
+  description: "This issue or pull request already exists"
+
+- name: "area: merge"
+  color: "8b949e"
+  description: "Merge strategies (scd1, scd2, deletes)"
+
+- name: "area: graph"
+  color: "8b949e"
+  description: "Dependency graph and planning"
+
+- name: "area: executor"
+  color: "8b949e"
+  description: "Running the planned pipeline"
+
+- name: "area: sources"
+  color: "8b949e"
+  description: "Source readers and connectors"
+
+- name: "area: runlog"
+  color: "8b949e"
+  description: "Run log and audit records"
+
+- name: "area: platform"
+  color: "8b949e"
+  description: "Platform adapters and runtime integration"
+
+- name: "area: config"
+  color: "8b949e"
+  description: "Pipeline configuration and schema"
+
+- name: "area: testing"
+  color: "8b949e"
+  description: "Test helpers and the merge conformance suite"
+
+- name: "area: declarative"
+  color: "8b949e"
+  description: "Declarative pipeline definitions"
+
+- name: "breaking change"
+  color: "d73a4a"
+  description: "Changes behaviour or the public interface in an incompatible way"
+
+- name: "needs docs"
+  color: "d73a4a"
+  description: "Needs documentation before it can be released"
+
+- name: "needs triage"
+  color: "fbca04"
+  description: "Waiting for a first look from a maintainer"
+
+- name: "needs reproduction"
+  color: "fbca04"
+  description: "Needs a minimal example that shows the problem"
+
+- name: "blocked"
+  color: "fbca04"
+  description: "Waiting on something outside this issue"
+
+- name: "platform: databricks"
+  color: "0e8a16"
+  description: "Specific to Databricks"
+
+- name: "platform: fabric"
+  color: "0e8a16"
+  description: "Specific to Microsoft Fabric"
+
+- name: "platform: local"
+  color: "0e8a16"
+  description: "Specific to running locally"
+
+- name: "dependencies"
+  color: "5319e7"
+  description: "Updates to dependencies"
+
+- name: "ci"
+  color: "5319e7"
+  description: "Continuous integration and workflows"
+
+- name: "release"
+  color: "5319e7"
+  description: "Release preparation and publishing"
