@@ -37,6 +37,16 @@ PIPETREE_CONFORMANCE_SEEDS=100 uv run pytest   # more thorough
 
 CI runs the same checks on every pull request.
 
+Workflow files are audited with [zizmor](https://docs.zizmor.sh/) (the `zizmor`
+check). To run it locally:
+
+```bash
+GITHUB_TOKEN=$(gh auth token) uvx zizmor .github
+```
+
+Fix findings where possible; if one is intentional, add an inline
+`# zizmor: ignore[rule]` with a comment explaining why.
+
 ## Pull requests
 
 - Keep a PR focused on one change and add or update tests for behaviour changes.
