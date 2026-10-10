@@ -4,16 +4,22 @@ code, not a separate lightweight substitute."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 
 def build_local_session(
-    app_name: str = "pipetree", warehouse_dir: str | None = None
+    app_name: str = "pipetree",
+    warehouse_dir: str | None = None,
+    *,
+    master: str = "local[*]",
+    conf: Mapping[str, str] | None = None,
 ) -> SparkSession:
     builder = (
         SparkSession.builder.appName(app_name)
-        .master("local[*]")
+        .master(master)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
             "spark.sql.catalog.spark_catalog",
@@ -23,5 +29,7 @@ def build_local_session(
     )
     if warehouse_dir is not None:
         builder = builder.config("spark.sql.warehouse.dir", warehouse_dir)
+    for key, value in (conf or {}).items():
+        builder = builder.config(key, value)
 
     return configure_spark_with_delta_pip(builder).getOrCreate()
