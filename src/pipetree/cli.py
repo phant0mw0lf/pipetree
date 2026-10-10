@@ -31,7 +31,13 @@ def main() -> None:
 
 @main.command()
 @_CONFIG_OPTION
-@click.option("--max-workers", default=4, show_default=True, type=int)
+@click.option(
+    "--max-workers",
+    default=4,
+    show_default=True,
+    type=int,
+    help="Maximum number of tables running at the same time.",
+)
 @click.option(
     "--select",
     "select_arg",
