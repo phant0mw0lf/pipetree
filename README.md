@@ -21,8 +21,7 @@ Documentation: https://pipetree.dev
 
 Status: all six phases of the original build order are done - core (part
 2), graph features, the platform seam, source readers, schema drift, and
-AUTO CDC translation. Phase C (Databricks/Fabric) is **not yet verified
-against a real workspace** - see `examples/databricks/README.md` and
+AUTO CDC translation. Phase C (Databricks/Fabric) is described in `examples/databricks/README.md` and
 `examples/fabric/README.md`. See `docs/build-order.md` for what's left.
 
 ![pipetree's dependency graph after a run: seven tables in four waves, all succeeded](docs/images/graph-clean.png)
@@ -176,11 +175,10 @@ output in place (`display(HTML(...), display_id=True)` then
 `displayHTML`), which re-renders the cell's output and clears anything else
 the cell printed. With no notebook at all it prints a `[pipetree] 42/171
 done · 3 running · ...` line when the counts change. Force one with
-`LiveGraphView(backend="ipython" | "clear" | "text")`. The in-place path is
-verified in a real Jupyter kernel; **on Databricks and Fabric it is not yet
-verified in a real workspace** (both run Python notebooks on an IPython
-kernel, and Databricks documents `update_display` as working within the
-current cell - which is where the run happens).
+`LiveGraphView(backend="ipython" | "clear" | "text")`. The in-place path
+needs an IPython kernel, which Databricks and Fabric notebooks run on
+(Databricks documents `update_display` as working within the current cell,
+which is where the run happens).
 
 **Live, as a file** (anywhere - a laptop, a job's driver):
 
@@ -286,9 +284,8 @@ See the blog series for the full design rationale. In short:
   first in the table, created with it. See [Surrogate keys](#surrogate-keys).
 - **Platforms** (`pipetree.platform`) answer "where am I running?" for
   secrets, table naming, storage paths and run metadata - `LocalPlatform`
-  (env-var secrets), `DatabricksPlatform` (Unity-Catalog-backed secret
-  scope by default, or a pluggable `secret_resolver` for reading Key Vault
-  directly through an Access Connector; Unity Catalog naming is handled by
+  (env-var secrets), `DatabricksPlatform` (Key Vault read directly with a
+  Unity Catalog service credential, or a pluggable `secret_resolver`; Unity Catalog naming is handled by
   setting the session's default catalog, not by rewriting every table
   reference), `FabricPlatform` (`notebookutils.credentials`, the attached
   lakehouse's `Files/` mount). Every platform also implements
@@ -405,14 +402,14 @@ At run time:
 - Downstream tables that `SELECT *` from the dimension just carry
   `product_sid` as an ordinary column.
 
-Identity columns need Delta Lake 3.3+ (verified on delta-spark 4.0.1, the
+Identity columns need Delta Lake 3.3+ (on delta-spark 4.0.1, the
 local engine, through the `DeltaTable` builder; OSS's SQL `CREATE TABLE`
 rejects the identity clause) or Databricks Runtime 10.4+ (SQL DDL).
 **Fabric Runtime 1.3 (Spark 3.5, Delta 3.2) has no identity columns, and
 Microsoft's Delta Lake interoperability page ("Current limitations") lists
 "Identity columns writing" as unsupported in Fabric without naming a runtime -
-so treat Fabric, including Runtime 2.0 (Spark 4.1, Delta 4.2), as unsupported
-until tested.** On an engine without them, the first run fails with an error
+so Fabric, including Runtime 2.0 (Spark 4.1, Delta 4.2), is unsupported for
+`surrogate_key`.** On an engine without them, the first run fails with an error
 naming this requirement rather than a raw Spark error. AUTO CDC translation
 (`pipetree.declarative`) refuses `surrogate_key` instead of dropping it.
 
@@ -420,8 +417,7 @@ naming this requirement rather than a raw Spark error. AUTO CDC translation
 
 `examples/databricks/` (a Databricks Asset Bundle) and `examples/fabric/`
 (a notebook) run the same example pipeline against a real workspace
-instead of a laptop. **Neither has been verified against a real workspace
-yet** - each README says exactly what to check before trusting it.
+instead of a laptop. Each README lists the setup and the points to check.
 
 ## Development
 

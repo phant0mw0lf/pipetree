@@ -87,5 +87,5 @@ LEFT JOIN gold.dim_product d
 - scd1: a new key gets a new value, an update keeps it. scd2: every new version gets a new value, closing a version never changes one.
 - The unknown member gets `-1`. Values are unique and increasing, with gaps.
 - The source must not have a column with that name.
-- It is a Delta identity column: Delta 3.3+ or Databricks Runtime 10.4+. Treat Fabric as unsupported until tested: Runtime 1.3 has no identity columns. A table created before `surrogate_key` was set has to be dropped and recreated.
+- It is a Delta identity column: Delta 3.3+ or Databricks Runtime 10.4+. Fabric Runtime 1.3 has no identity columns, so `surrogate_key` is unsupported there. A table created before `surrogate_key` was set has to be dropped and recreated.
 - The [AUTO CDC translation](../../guides/autocdc/) refuses it.

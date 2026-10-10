@@ -50,7 +50,7 @@ Any system value can be `{ secret: name }`. The platform resolves it at run time
 | Platform | Resolved from |
 | --- | --- |
 | Local | environment variable: the name upper-cased, `-` and space replaced by `_` (`hr-sql-host` is `HR_SQL_HOST`) |
-| Databricks | a Unity Catalog-backed secret scope, or a resolver you pass in |
+| Databricks | Key Vault, read with a Unity Catalog service credential, or a resolver you pass in |
 | Fabric | `notebookutils.credentials` (Key Vault) |
 
 ## Validate
