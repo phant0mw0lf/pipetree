@@ -34,10 +34,7 @@ pip install "pipetree-meta[spark]"   # + PySpark and Delta Lake for local runs
 pip install "pipetree-meta[azure]"   # + azure-identity for secretless auth
 ```
 
-The distribution is named `pipetree-meta`; the import package and the CLI
-command are `pipetree`. An unrelated, abandoned project called `pipetree`
-(2016) also exists on PyPI and also installs a `pipetree` package. The two
-must not be installed into the same environment.
+The import package and the CLI command are `pipetree`.
 
 ## Quick start
 
