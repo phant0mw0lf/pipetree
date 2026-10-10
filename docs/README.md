@@ -30,7 +30,7 @@ A fenced block marked `yaml validate` is a complete config and must pass the con
 
 ## Hosting: Cloudflare (Workers with static assets)
 
-Cloudflare builds and deploys the site from the GitHub repository. The build there also validates all internal links, so a pull request with a broken page or link fails its Cloudflare check. `docs/wrangler.jsonc` tells Cloudflare to serve `dist/`.
+Cloudflare builds and deploys the site from the GitHub repository. `.github/workflows/docs.yml` (`docs-build`) only checks that a change builds and that all internal links are valid. `docs/wrangler.jsonc` tells Cloudflare to serve `dist/`.
 
 Settings when creating the project (Workers & Pages, Create, Import a repository):
 
