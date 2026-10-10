@@ -205,17 +205,6 @@ every existing two-level reference resolves against it unchanged.
 an explicit three-level reference later, without forcing that shape
 everywhere.
 
-**The DAB and Fabric notebook are unverified - deliberately, and said so
-in both READMEs.** Neither `examples/databricks/` nor `examples/fabric/`
-has run against a real workspace yet; both were built against documented
-APIs (`dbutils.credentials`, `notebookutils.credentials.getSecret`) and
-reasonable conventions, with the specific things most likely to be wrong
-called out explicitly in each README (`dbutils` availability in a
-`spark_python_task`, the exact Files-mount path convention, the runtime
-version pinned in `databricks.yml`). This is the handoff point: the
-verification round is David deploying both and reporting back what
-breaks, not something to fake confidence about here.
-
 ## Phase D: sources
 
 **`Trigger.AvailableNow` needs a sink to actually run, which took some
