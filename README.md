@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/src/assets/logo.svg" alt="pipetree" width="120">
+</p>
+
 # pipetree
 
 [![CI](https://github.com/phant0mw0lf/pipetree/actions/workflows/ci.yml/badge.svg)](https://github.com/phant0mw0lf/pipetree/actions/workflows/ci.yml)

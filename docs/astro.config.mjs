@@ -13,6 +13,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'pipetree',
+      logo: { src: './src/assets/logo.svg', alt: 'pipetree' },
+      favicon: '/favicon.svg',
       description: 'Metadata-driven pipeline orchestration: YAML in, a runnable dependency tree out.',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/phant0mw0lf/pipetree' },
@@ -22,6 +24,11 @@ export default defineConfig({
       },
       head: [
         { tag: 'meta', attrs: { property: 'og:site_name', content: 'pipetree' } },
+        { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '48x48' } },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
+        { tag: 'meta', attrs: { property: 'og:image', content: new URL('/og.png', site).href } },
+        { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+        { tag: 'meta', attrs: { name: 'twitter:image', content: new URL('/og.png', site).href } },
       ],
       plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
       sidebar: [
