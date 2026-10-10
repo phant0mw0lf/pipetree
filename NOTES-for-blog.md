@@ -182,17 +182,13 @@ example of why the platform work matters even before a real workspace is
 involved - designing the entrypoint honestly finds bugs the local demo
 never could.
 
-**Secret resolution is pluggable on `DatabricksPlatform`, not hardcoded to
-`dbutils.secrets`.** The first draft called `dbutils.secrets.get(scope,
-key)` unconditionally. Corrected: that's fine as a default *as long as the
-scope is Unity-Catalog-backed* (`--scope-backend-type UC`), but a legacy
-Azure-Key-Vault-backed secret scope is exactly what Databricks itself now
-treats as legacy and less secure. So `DatabricksPlatform` takes an
-optional `secret_resolver` callable instead of assuming dbutils is the
-only path - the intended real alternative is an Access Connector for
-Azure Databricks (a UC-governed managed identity) reading Key Vault
-directly, which a caller wires up as its own `secret_resolver` rather than
-this package guessing the exact SDK calls.
+**Databricks secrets come from Key Vault through a service credential, not a
+secret scope.** A Key Vault-backed scope needs the shared `AzureDatabricks`
+Entra application to have access to the vault, and a Databricks-stored scope
+keeps the values in Databricks. `DatabricksPlatform` instead reads Key Vault
+directly with the identity of a Unity Catalog service credential (backed by an
+Access Connector holding `Key Vault Secrets User`). `secret_resolver` stays as
+the escape hatch.
 
 **Unity Catalog naming: session-default catalog, not fqn rewriting.**
 `DatabricksPlatform.qualify_table_name()` exists and is tested
@@ -208,17 +204,6 @@ every existing two-level reference resolves against it unchanged.
 `qualify_table_name()` stays available for anything that genuinely needs
 an explicit three-level reference later, without forcing that shape
 everywhere.
-
-**The DAB and Fabric notebook are unverified - deliberately, and said so
-in both READMEs.** Neither `examples/databricks/` nor `examples/fabric/`
-has run against a real workspace yet; both were built against documented
-APIs (`dbutils.secrets`, `notebookutils.credentials.getSecret`) and
-reasonable conventions, with the specific things most likely to be wrong
-called out explicitly in each README (`dbutils` availability in a
-`spark_python_task`, the exact Files-mount path convention, the runtime
-version pinned in `databricks.yml`). This is the handoff point: the
-verification round is David deploying both and reporting back what
-breaks, not something to fake confidence about here.
 
 ## Phase D: sources
 

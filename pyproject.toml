@@ -32,7 +32,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/phant0mw0lf/pipetree"
+Homepage = "https://pipetree.dev"
+Documentation = "https://pipetree.dev"
 Repository = "https://github.com/phant0mw0lf/pipetree"
 Issues = "https://github.com/phant0mw0lf/pipetree/issues"
 Changelog = "https://github.com/phant0mw0lf/pipetree/blob/main/CHANGELOG.md"

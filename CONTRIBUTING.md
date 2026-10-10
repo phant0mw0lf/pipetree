@@ -60,7 +60,7 @@ Pull requests run these jobs (`.github/workflows/ci.yml`):
   `src/pipetree/testing/`, `tests/merge_conformance/`, `pyproject.toml`,
   `uv.lock`, `tests/conftest.py`, `ci.yml`) and with 5 seeds otherwise; the
   fixed regression corpus and the hand-built cases always run. It is skipped when a pull request only changes files the
-  tests do not read (markdown, images, notebooks, `docs/`, other workflows, ...).
+  tests do not read (markdown, images, notebooks, `docs/` apart from the pages, scripts and the generated schema, other workflows, ...).
   A push to `main` always runs it. Coverage goes to Codecov. It starts after
   `lint` and not at all if `lint` failed, and stops after 5 failed tests
   (`--maxfail=5`), so a broken change fails fast. The Spark tests must run in
@@ -83,6 +83,14 @@ workflow, for example before a release. To run it locally:
 ```bash
 PIPETREE_CONFORMANCE_SEEDS=300 uv run pytest tests/merge_conformance -n 4
 ```
+
+## Documentation
+
+The documentation site lives in `docs/` (Astro Starlight, see `docs/README.md`). The YAML and CLI
+reference pages and `docs/public/pipetree.schema.json` are generated from the code: after changing
+`src/pipetree/model.py` or `src/pipetree/cli.py`, run
+`uv run python docs/scripts/gen_reference.py` and commit the result. A test fails when they are out
+of date. Complete YAML examples in the pages are marked `yaml validate` and are checked by a test.
 
 ## Pull requests
 
