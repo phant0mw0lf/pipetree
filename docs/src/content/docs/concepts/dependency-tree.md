@@ -12,7 +12,7 @@ silver:
       logic: notebooks/silver/orders.sql
       business_key: [order_id]
       strategy: replace
-      depends_on: auto        # read FROM / JOIN from the file
+      depends_on: auto        # read the tables from the logic file
 
 gold:
   tables:
@@ -27,18 +27,30 @@ gold:
 
 ## What `auto` reads
 
-| File | Found |
+`.sql` files are parsed as Spark SQL, `.py` files as Python.
+
+| Source | Counts as a dependency |
 | --- | --- |
-| `.sql` | the name after every `FROM` and `JOIN`, as `name` or `schema.name` |
-| `.py` | `spark.table("name")` and `spark.sql("...")` with a literal string; `FROM`/`JOIN` inside that SQL |
+| SQL | every table in `FROM`, any `JOIN`, subquery, set operation, `LATERAL`, `TABLE(name)`; the target and sources of `CREATE TABLE ... AS`, `INSERT`, `MERGE` and `LIKE` / `CLONE` |
+| PySpark | `spark.table`, `spark.read.table`, `spark.readStream.table`, `DeltaTable.forName`, and the SQL in `spark.sql` |
 
-Limits:
+Names can be a string literal, literals joined by `+` or implicitly, or an f-string over module-level string constants (`LAYER = "silver"`).
 
-- It is a text scan, not a parser. A table name built at run time (f-string, variable) is not seen. List those in `depends_on`.
-- Names that match no table are ignored: they are read as external tables. A typo in a name therefore removes an edge instead of failing. `depends_on: auto` needs a `logic` file.
-- `catalog.schema.table` is not matched as a whole.
-- Other file types fail with an error.
-- A table that reads itself is not a cycle; the edge is dropped.
+Not a dependency:
+
+- CTE names, views created in the same file (`CREATE TEMP VIEW`, `createOrReplaceTempView`), table functions (`range`, `explode`), `VALUES`, path tables (``delta.`/mnt/x` ``, `spark.read.parquet(...)`).
+- A table that reads or writes itself: the edge is dropped, not a cycle.
+- Names that match no table are external sources and are ignored.
+
+Errors, naming the file and the expression:
+
+- A name only known at run time: `spark.table(f"{layer}.x")` with a parameter, `.format(...)`, a function result. Declare `depends_on` explicitly.
+- SQL that does not parse, or T-SQL such as `CROSS APPLY`; a Python syntax error.
+- A bare name that several tables share (`orders` in `bronze` and `silver`). Write `schema.table`.
+
+How a name matches a table: `catalog.schema.table` and `schema.table` match the table `schema.table` (the catalog is added when the platform runs). A bare `table` matches the one table with that name in any layer. Case is ignored.
+
+Reads through another variable (`reader = spark.read; reader.table("x")`) are not seen; list those in `depends_on`. `depends_on: auto` needs a `logic` file, and other file types fail with an error.
 
 An explicit list is strict: a name that matches no table (or several) is an error.
 

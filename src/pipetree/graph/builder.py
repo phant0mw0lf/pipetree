@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from pipetree.graph.errors import CycleError, GraphError, UnresolvedDependencyError
+from pipetree.graph.errors import (
+    CycleError,
+    DependencyParseError,
+    GraphError,
+    UnresolvedDependencyError,
+)
 from pipetree.graph.parsers import parse_logic_dependencies
 from pipetree.model import PipelineConfig, Table
 
@@ -44,14 +49,16 @@ def _resolve_table_dependencies(table: Table, tables: dict[str, Table], base_dir
     if table.depends_on == "auto":
         if table.logic is None:
             raise GraphError(f"{table.fqn}: depends_on: auto requires a 'logic' file")
-        raw_names = parse_logic_dependencies(base_dir / table.logic)
-        # auto-parsed names that don't match a known table are treated as
-        # reads of something outside the pipeline (e.g. a raw external
-        # table) rather than an error - the parser can't tell the two apart.
+        logic_path = base_dir / table.logic
+        raw_names = parse_logic_dependencies(logic_path)
+        # Names that match no table are reads of something outside the
+        # pipeline (a raw external table) and are ignored; only a bare name
+        # that several tables share is an error, since guessing would be a
+        # silently wrong run order.
         return {
             resolved
-            for name in raw_names
-            if (resolved := resolve_table_name(name, tables)) is not None
+            for name in sorted(raw_names)
+            if (resolved := _resolve_parsed_name(name, tables, str(logic_path))) is not None
         }
 
     resolved_deps: set[str] = set()
@@ -61,6 +68,28 @@ def _resolve_table_dependencies(table: Table, tables: dict[str, Table], base_dir
             raise UnresolvedDependencyError(table.fqn, name)
         resolved_deps.add(resolved)
     return resolved_deps
+
+
+def _resolve_parsed_name(name: str, tables: dict[str, Table], file: str) -> str | None:
+    """Match a name read from a logic file to a configured table.
+
+    `catalog.schema.table` and `schema.table` match the table with that
+    `schema.table` fqn; the catalog is added by the platform at run time.
+    A bare `table` matches the one table with that name, whichever layer it
+    is in. Comparison ignores case, like SQL identifiers."""
+    parts = name.casefold().split(".")
+    if len(parts) >= 2:
+        wanted = ".".join(parts[-2:])
+        return next((fqn for fqn in tables if fqn.casefold() == wanted), None)
+
+    matches = [fqn for fqn, t in tables.items() if t.name.casefold() == parts[0]]
+    if len(matches) > 1:
+        raise DependencyParseError(
+            file,
+            f"the table {name!r} matches several tables ({', '.join(sorted(matches))}), "
+            "so it needs a schema qualifier",
+        )
+    return matches[0] if matches else None
 
 
 def resolve_table_name(name: str, tables: dict[str, Table]) -> str | None:
