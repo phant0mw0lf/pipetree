@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from pipetree.graph.builder import build_graph
-from pipetree.graph.errors import CycleError, UnresolvedDependencyError
+from pipetree.graph.errors import CycleError, DependencyParseError, UnresolvedDependencyError
 from pipetree.model import PipelineConfig
 
 BASE_RAW = {
@@ -79,7 +79,8 @@ def test_builds_edges_from_auto_dependencies_via_logic_file(tmp_path: Path):
 def test_ignores_self_reads_in_auto_dependencies(tmp_path: Path):
     (tmp_path / "silver").mkdir()
     (tmp_path / "silver" / "orders.sql").write_text(
-        "MERGE INTO silver.orders USING (SELECT * FROM bronze.orders) s ON true"
+        "MERGE INTO silver.orders USING (SELECT * FROM bronze.orders) s ON true "
+        "WHEN MATCHED THEN DELETE"
     )
 
     config = config_with(
@@ -254,3 +255,98 @@ def test_raises_cycle_error_with_the_cycle_path(tmp_path: Path):
     cycle = exc_info.value.cycle
     assert cycle[0] == cycle[-1]
     assert set(cycle) == {"gold.a", "gold.b"}
+
+
+def _auto_config(*, logic: str, tmp_path: Path, extra_layers: dict | None = None) -> PipelineConfig:
+    (tmp_path / "gold").mkdir(exist_ok=True)
+    (tmp_path / "gold" / "report.sql").write_text(logic)
+    return config_with(
+        {
+            "bronze": {
+                "tables": {
+                    "orders": {
+                        "source": {"system": "crm", "object": "SalesOrderHeader"},
+                        "strategy": "scd1",
+                    },
+                    "customer": {
+                        "source": {"system": "crm", "object": "account"},
+                        "strategy": "scd1",
+                    },
+                }
+            },
+            "silver": {
+                "tables": {
+                    "orders": {
+                        "source": {"system": "crm", "object": "SalesOrderHeader"},
+                        "strategy": "scd1",
+                    }
+                }
+            },
+            "gold": {
+                "tables": {
+                    "report": {
+                        "logic": "gold/report.sql",
+                        "strategy": "replace",
+                        "depends_on": "auto",
+                    }
+                }
+            },
+            **(extra_layers or {}),
+        }
+    )
+
+
+def test_auto_matches_a_catalog_qualified_name_to_schema_table(tmp_path: Path):
+    config = _auto_config(logic="SELECT * FROM main.bronze.customer", tmp_path=tmp_path)
+
+    assert build_graph(config, tmp_path).edges["gold.report"] == frozenset({"bronze.customer"})
+
+
+def test_auto_matches_names_regardless_of_case(tmp_path: Path):
+    config = _auto_config(logic="SELECT * FROM `Main`.`Silver`.`Orders`", tmp_path=tmp_path)
+
+    assert build_graph(config, tmp_path).edges["gold.report"] == frozenset({"silver.orders"})
+
+
+def test_auto_matches_an_unambiguous_bare_name(tmp_path: Path):
+    config = _auto_config(logic="SELECT * FROM customer", tmp_path=tmp_path)
+
+    assert build_graph(config, tmp_path).edges["gold.report"] == frozenset({"bronze.customer"})
+
+
+def test_auto_refuses_a_bare_name_that_several_tables_share(tmp_path: Path):
+    config = _auto_config(logic="SELECT * FROM orders", tmp_path=tmp_path)
+
+    with pytest.raises(DependencyParseError) as excinfo:
+        build_graph(config, tmp_path)
+
+    message = str(excinfo.value)
+    assert "report.sql" in message
+    assert "bronze.orders" in message
+    assert "silver.orders" in message
+
+
+def test_auto_ignores_names_that_match_no_table(tmp_path: Path):
+    config = _auto_config(
+        logic=(
+            "SELECT * FROM raw.landing JOIN main.raw.landing2 ON true JOIN bronze.customer ON true"
+        ),
+        tmp_path=tmp_path,
+    )
+
+    assert build_graph(config, tmp_path).edges["gold.report"] == frozenset({"bronze.customer"})
+
+
+def test_auto_does_not_count_a_cte_or_local_view_as_a_dependency(tmp_path: Path):
+    config = _auto_config(
+        logic=(
+            "CREATE OR REPLACE TEMP VIEW customer AS SELECT * FROM silver.orders;"
+            "WITH orders AS (SELECT * FROM bronze.customer) "
+            "SELECT * FROM orders JOIN customer ON true"
+        ),
+        tmp_path=tmp_path,
+    )
+
+    assert build_graph(config, tmp_path).edges["gold.report"] == frozenset(
+        {"silver.orders", "bronze.customer"}
+    )

@@ -34,3 +34,18 @@ class UnknownTableError(GraphError):
             f"no table matches {name!r} - not a known fully qualified name, "
             "and no single table has that as its bare name"
         )
+
+
+class DependencyParseError(GraphError, ValueError):
+    """`depends_on: auto` cannot read a dependency out of a logic file: the
+    file does not parse, or a table name is only known at run time. The
+    message carries the file, the offending expression and the fix."""
+
+    HINT = "declare the parents with an explicit depends_on list"
+
+    def __init__(self, file: str, reason: str, expression: str | None = None):
+        self.file = file
+        self.reason = reason
+        self.expression = expression
+        detail = f" in `{expression}`" if expression else ""
+        super().__init__(f"{file}: {reason}{detail} - {self.HINT}")

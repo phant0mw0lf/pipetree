@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from pipetree.graph.errors import DependencyParseError
 from pipetree.graph.parsers import (
     parse_logic_dependencies,
     parse_pyspark_dependencies,
@@ -50,13 +51,33 @@ result = spark.sql("""
     assert parse_pyspark_dependencies(code) == {"silver.orders"}
 
 
-def test_parse_pyspark_dependencies_ignores_dynamically_built_names():
+def test_parse_pyspark_dependencies_resolves_names_from_module_constants():
     code = """
 name = "silver.orders"
 result = spark.sql(f"SELECT * FROM {name}")
 """
 
-    assert parse_pyspark_dependencies(code) == set()
+    assert parse_pyspark_dependencies(code) == {"silver.orders"}
+
+
+def test_parse_pyspark_dependencies_refuses_names_built_at_run_time():
+    code = """
+def load(name):
+    return spark.sql(f"SELECT * FROM {name}")
+"""
+
+    with pytest.raises(DependencyParseError, match="depends_on"):
+        parse_pyspark_dependencies(code, file="orders.py")
+
+
+def test_dependency_parse_error_names_file_expression_and_fix():
+    with pytest.raises(DependencyParseError) as excinfo:
+        parse_pyspark_dependencies("df = spark.table(get_name())", file="silver/orders.py")
+
+    message = str(excinfo.value)
+    assert "silver/orders.py" in message
+    assert "spark.table(get_name())" in message
+    assert "depends_on" in message
 
 
 def test_parse_logic_dependencies_dispatches_sql_files(tmp_path: Path):

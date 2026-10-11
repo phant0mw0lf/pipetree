@@ -29,6 +29,7 @@ dependencies = [
     "pydantic>=2.9",
     "pyyaml>=6.0",
     "click>=8.1",
+    "sqlglot>=27,<30",
 ]
 
 [project.urls]

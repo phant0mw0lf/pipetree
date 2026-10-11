@@ -261,3 +261,24 @@ def test_run_live_html_writes_a_final_page_for_a_real_run(tmp_path: Path, monkey
     page = target.read_text(encoding="utf-8")
     assert 'data-fqn="bronze.customer" data-status="succeeded"' in page
     assert "http-equiv" not in page
+
+
+def test_graph_reports_an_unresolvable_dependency_cleanly(tmp_path: Path):
+    (tmp_path / "notebooks").mkdir()
+    (tmp_path / "notebooks" / "customer_enriched.py").write_text(
+        "df = spark.table(get_table_name())\n"
+    )
+    config_path = write(
+        tmp_path,
+        CHAIN_CONFIG.replace("customer_enriched.sql", "customer_enriched.py").replace(
+            "depends_on: [customer]", "depends_on: auto"
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code != 0
+    assert "customer_enriched.py" in result.output
+    assert "spark.table(get_table_name())" in result.output
+    assert "depends_on" in result.output
+    assert "Traceback" not in result.output
