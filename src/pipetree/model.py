@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 DEFAULT_SYSTEM_COLUMNS = [
     "_inserted_at",
@@ -88,6 +88,15 @@ class EmailNotification(BaseModel):
         min_length=1,
         description="Recipient addresses. At least one.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _yaml_on_is_a_boolean(cls, data: Any) -> Any:
+        # YAML 1.1 (PyYAML) reads an unquoted `on:` key as the boolean True.
+        if isinstance(data, dict) and True in data and "on" not in data:
+            data = {("on" if key is True else key): value for key, value in data.items()}
+        return data
+
     on: Literal["failure"] = Field(
         default="failure",
         description="When to send. `failure` mails a run in which a table failed or "

@@ -88,3 +88,21 @@ def test_required_keys(tmp_path: Path, missing: str):
 def test_unknown_notification_channel_is_rejected(tmp_path: Path):
     with pytest.raises(ConfigError, match="notifications"):
         load(tmp_path, {"slack": {}})
+
+
+def test_unquoted_on_key_in_yaml_is_accepted(tmp_path: Path):
+    path = tmp_path / "p.yaml"
+    path.write_text(
+        BASE
+        + """
+notifications:
+  email:
+    endpoint: https://acs.communication.azure.com
+    sender: DoNotReply@guid.azurecomm.net
+    to: [info@example.com]
+    on: failure
+"""
+    )
+    config = PipelineConfig.from_validated_raw(load_config(path))
+    assert config.notifications is not None and config.notifications.email is not None
+    assert config.notifications.email.on == "failure"
