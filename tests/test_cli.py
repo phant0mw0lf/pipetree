@@ -282,3 +282,207 @@ def test_graph_reports_an_unresolvable_dependency_cleanly(tmp_path: Path):
     assert "spark.table(get_table_name())" in result.output
     assert "depends_on" in result.output
     assert "Traceback" not in result.output
+
+
+TAGGED_CONFIG = CHAIN_CONFIG.replace(
+    "      strategy: scd1\n", "      strategy: scd1\n      tags: [daily, crm]\n"
+).replace(
+    "      depends_on: [customer]\n", "      depends_on: [customer]\n      tags: [reporting]\n"
+)
+
+
+def _capture_run(monkeypatch) -> dict:
+    calls: dict = {}
+
+    class FakeDigest:
+        exit_code = 0
+
+    def fake_run_pipeline(path, **kwargs):
+        calls.update(kwargs)
+        return FakeDigest()
+
+    monkeypatch.setattr("pipetree.cli.run_pipeline", fake_run_pipeline)
+    return calls
+
+
+def test_run_passes_repeated_tags_and_exclude_tags_through(tmp_path: Path, monkeypatch):
+    config_path = write(tmp_path, TAGGED_CONFIG)
+    calls = _capture_run(monkeypatch)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "--config",
+            str(config_path),
+            "--tag",
+            "daily",
+            "--tag",
+            "crm",
+            "--exclude-tag",
+            "reporting",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["tags"] == ["daily", "crm"]
+    assert calls["exclude_tags"] == ["reporting"]
+
+
+def test_run_tag_values_may_be_comma_separated_and_untidy(tmp_path: Path, monkeypatch):
+    config_path = write(tmp_path, TAGGED_CONFIG)
+    calls = _capture_run(monkeypatch)
+
+    CliRunner().invoke(main, ["run", "--config", str(config_path), "--tag", "daily, crm"])
+
+    assert calls["tags"] == ["daily", "crm"]
+
+
+def test_run_without_tags_passes_none(tmp_path: Path, monkeypatch):
+    config_path = write(tmp_path, TAGGED_CONFIG)
+    calls = _capture_run(monkeypatch)
+
+    CliRunner().invoke(main, ["run", "--config", str(config_path)])
+
+    assert calls["tags"] is None
+    assert calls["exclude_tags"] is None
+
+
+def test_run_with_an_unknown_tag_is_a_clean_error_listing_the_known_tags(tmp_path: Path):
+    config_path = write(tmp_path, TAGGED_CONFIG)
+
+    result = CliRunner().invoke(main, ["run", "--config", str(config_path), "--tag", "weekly"])
+
+    assert result.exit_code != 0
+    assert "weekly" in result.output
+    assert "crm, daily, reporting" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_run_with_an_empty_selection_is_a_clean_error(tmp_path: Path):
+    config_path = write(tmp_path, TAGGED_CONFIG)
+
+    result = CliRunner().invoke(
+        main,
+        ["run", "--config", str(config_path), "--tag", "crm", "--exclude-tag", "daily"],
+    )
+
+    assert result.exit_code != 0
+    assert "no table" in result.output
+
+
+def test_validate_rejects_a_bad_tag_with_the_key_path(tmp_path: Path):
+    config_path = write(
+        tmp_path, VALID_CONFIG.replace("strategy: scd1", "strategy: scd1\n      tags: [Bad]")
+    )
+
+    result = CliRunner().invoke(main, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code != 0
+    assert "bronze.tables.customer.tags[0]" in result.output
+
+
+def test_validate_list_tags_prints_each_tag_with_its_table_count(tmp_path: Path):
+    (tmp_path / "notebooks").mkdir()
+    (tmp_path / "notebooks" / "customer_enriched.sql").write_text("SELECT 1")
+    config_path = write(tmp_path, TAGGED_CONFIG)
+
+    result = CliRunner().invoke(main, ["validate", "--config", str(config_path), "--list-tags"])
+
+    assert result.exit_code == 0
+    lines = [line.split() for line in result.output.strip().splitlines()]
+    assert lines == [["crm", "1"], ["daily", "1"], ["reporting", "1"]]
+
+
+def test_validate_list_tags_says_so_when_no_table_has_tags(tmp_path: Path):
+    config_path = write(tmp_path, VALID_CONFIG)
+
+    result = CliRunner().invoke(main, ["validate", "--config", str(config_path), "--list-tags"])
+
+    assert result.exit_code == 0
+    assert "no tags" in result.output
+
+
+def _graph_fixture(tmp_path: Path) -> Path:
+    (tmp_path / "notebooks").mkdir()
+    (tmp_path / "notebooks" / "customer_enriched.sql").write_text("SELECT 1")
+    return write(tmp_path, TAGGED_CONFIG)
+
+
+def test_graph_text_marks_the_tables_a_tag_would_not_run(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(main, ["graph", "--config", str(config_path), "--tag", "reporting"])
+
+    assert result.exit_code == 0
+    lines = {line.split()[0]: line for line in result.output.splitlines()}
+    assert "not selected" in lines["bronze.customer"]
+    assert "not selected" not in lines["silver.customer_enriched"]
+
+
+def test_graph_without_filters_is_unchanged(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(main, ["graph", "--config", str(config_path)])
+
+    assert "not selected" not in result.output
+
+
+def test_graph_select_and_exclude_tag_work_like_run(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "graph",
+            "--config",
+            str(config_path),
+            "--select",
+            "silver.customer_enriched",
+            "--with-ancestors",
+            "--exclude-tag",
+            "crm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    lines = {line.split()[0]: line for line in result.output.splitlines()}
+    assert "not selected" in lines["bronze.customer"]
+    assert "not selected" not in lines["silver.customer_enriched"]
+
+
+def test_graph_html_shows_skipped_tables_and_tags_in_the_tooltip(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        main,
+        ["graph", "--config", str(config_path), "--format", "html", "--tag", "reporting"],
+    )
+
+    assert result.exit_code == 0
+    assert 'data-fqn="bronze.customer" data-status="skipped"' in result.output
+    assert 'data-fqn="silver.customer_enriched" data-status="pending"' in result.output
+    assert "tags: daily, crm" in result.output
+    assert "not selected" in result.output
+
+
+def test_graph_mermaid_marks_the_tables_that_would_not_run(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        main,
+        ["graph", "--config", str(config_path), "--format", "mermaid", "--tag", "reporting"],
+    )
+
+    assert result.exit_code == 0
+    assert "classDef notselected" in result.output
+    assert "class n0 notselected" in result.output
+
+
+def test_graph_with_an_unknown_tag_is_a_clean_error(tmp_path: Path):
+    config_path = _graph_fixture(tmp_path)
+
+    result = CliRunner().invoke(main, ["graph", "--config", str(config_path), "--tag", "nope"])
+
+    assert result.exit_code != 0
+    assert "nope" in result.output

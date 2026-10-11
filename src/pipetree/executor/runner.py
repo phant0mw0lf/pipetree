@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from pipetree.adapters.base import Adapter
@@ -33,6 +33,7 @@ from pipetree.executor.execution_id import generate_execution_id, timestamp_bigi
 from pipetree.executor.retry import RetryPolicy, backoff_delay
 from pipetree.executor.status import RunDigest, TableResult, TableStatus
 from pipetree.graph.builder import Graph
+from pipetree.graph.select import inputs_not_refreshed
 from pipetree.model import Table
 
 _logger = logging.getLogger("pipetree.executor")
@@ -67,6 +68,11 @@ def run_pipeline(
     results: dict[str, TableResult] = {}
     settled: set[str] = set()  # tables with a final result: no longer schedulable
 
+    # A partial run reads whatever its excluded parents last wrote - say so.
+    unrefreshed = inputs_not_refreshed(graph, run_set)
+    for fqn, parents in unrefreshed.items():
+        _logger.warning("%s: input not refreshed: %s", fqn, ", ".join(parents))
+
     now = timestamp_bigint()
     for fqn in graph.tables:
         if fqn not in run_set:
@@ -100,6 +106,7 @@ def run_pipeline(
                 retry_policy,
                 init,
                 emit,
+                unrefreshed.get(fqn, ()),
             )
             futures[future] = fqn
 
@@ -183,6 +190,7 @@ def _run_with_retries(
     retry_policy: RetryPolicy,
     init: bool = False,
     emit: Callable[[TableEvent], None] | None = None,
+    inputs_not_refreshed: Sequence[str] = (),
 ) -> TableResult:
     started_at = timestamp_bigint()
     start_perf = time.perf_counter()
@@ -224,6 +232,7 @@ def _run_with_retries(
                     start_perf,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
+                    details=_with_inputs(None, inputs_not_refreshed),
                 )
 
             delay = backoff_delay(attempts, retry_policy)
@@ -250,11 +259,25 @@ def _run_with_retries(
             continue
 
         status = TableStatus.SUCCEEDED if attempts == 1 else TableStatus.RETRIED_SUCCEEDED
-        result = _finish(table.fqn, status, attempts, started_at, start_perf, details=details)
+        result = _finish(
+            table.fqn,
+            status,
+            attempts,
+            started_at,
+            start_perf,
+            details=_with_inputs(details, inputs_not_refreshed),
+        )
         _logger.info(
             "%s: %s (attempts=%d, %dms)", table.fqn, status.value, attempts, result.duration_ms
         )
         return result
+
+
+def _with_inputs(details: dict | None, inputs_not_refreshed: Sequence[str]) -> dict:
+    merged = dict(details or {})
+    if inputs_not_refreshed:
+        merged["inputs_not_refreshed"] = list(inputs_not_refreshed)
+    return merged
 
 
 def _finish(

@@ -71,6 +71,7 @@ def test_writes_rows_whose_optional_columns_are_all_none(spark):
             "error_type": None,
             "error_message": None,
             "null_keys_dropped": None,
+            "run_tags": [],
         }
     ]
 
@@ -110,4 +111,52 @@ def test_a_run_log_table_without_null_keys_dropped_is_evolved_in_place(spark):
     assert by_fqn["bronze.old"]["null_keys_dropped"] is None
     assert by_fqn["bronze.old"]["duplicates_dropped"] == 2
     assert by_fqn["bronze.new"]["null_keys_dropped"] == 7
+    assert spark.table(fqn).columns == spark.table(fresh_fqn).columns
+
+
+def test_run_tags_round_trip_as_an_array_column(spark):
+    writer = DeltaRunLogWriter(spark, table_fqn="rl_tags.log")
+    rows = [
+        {
+            "_execution_id": 1,
+            "table_fqn": "bronze.a",
+            "status": "succeeded",
+            "run_tags": ["d", "c"],
+        },
+        {"_execution_id": 1, "table_fqn": "bronze.b", "status": "succeeded", "run_tags": []},
+    ]
+
+    writer.write(rows, execution_id=1)
+
+    by_fqn = {r["table_fqn"]: r["run_tags"] for r in spark.table("rl_tags.log").collect()}
+    assert by_fqn == {"bronze.a": ["d", "c"], "bronze.b": []}
+    assert dict(spark.table("rl_tags.log").dtypes)["run_tags"] == "array<string>"
+
+
+def test_a_run_log_table_without_run_tags_gains_the_column_on_the_next_write(spark):
+    fresh_fqn, fqn = "rl_fresh_tags.log", "rl_evolve_tags.log"
+    spark.sql("CREATE SCHEMA IF NOT EXISTS rl_evolve_tags")
+    spark.sql(
+        f"CREATE TABLE {fqn} (_execution_id BIGINT NOT NULL, table_fqn STRING NOT NULL, "
+        "layer STRING, strategy STRING, status STRING, attempts BIGINT, started_at BIGINT, "
+        "ended_at BIGINT, duration_ms BIGINT, rows_written BIGINT, duplicates_dropped BIGINT, "
+        "schema_changes ARRAY<STRING>, error_type STRING, error_message STRING, "
+        "null_keys_dropped BIGINT) USING delta"
+    )
+    spark.sql(
+        f"INSERT INTO {fqn} (_execution_id, table_fqn, status) VALUES (1, 'bronze.old', 'ok')"
+    )
+    new_row = {
+        "_execution_id": 2,
+        "table_fqn": "bronze.new",
+        "status": "succeeded",
+        "run_tags": ["daily"],
+    }
+
+    DeltaRunLogWriter(spark, table_fqn=fqn).write([new_row], execution_id=2)
+    DeltaRunLogWriter(spark, table_fqn=fresh_fqn).write([new_row], execution_id=2)
+
+    by_fqn = {r["table_fqn"]: r for r in spark.table(fqn).collect()}
+    assert by_fqn["bronze.old"]["run_tags"] is None
+    assert by_fqn["bronze.new"]["run_tags"] == ["daily"]
     assert spark.table(fqn).columns == spark.table(fresh_fqn).columns

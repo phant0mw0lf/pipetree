@@ -25,6 +25,12 @@ variables:
       empty key_vault_url.
     default: ""
 
+  tags:
+    description: >
+      Comma separated tags: only tables carrying at least one of them run, for
+      example "daily, crm". Empty runs every table.
+    default: ""
+
 artifacts:
   pipetree:
     type: whl
@@ -54,6 +60,7 @@ resources:
               - "${var.catalog}"
               - "${var.key_vault_url}"
               - "${var.key_vault_credential}"
+              - "${var.tags}"
           libraries:
             - whl: ../../dist/*.whl
 

@@ -212,3 +212,127 @@ def test_run_pipeline_passes_the_observer_through_to_the_executor(tmp_path: Path
         "bronze.customer:succeeded",
         "end",
     ]
+
+
+TAGGED_CONFIG = """
+systems:
+  crm:
+    type: synapse_link
+
+bronze:
+  tables:
+    customer:
+      source:
+        system: crm
+        object: account
+      business_key: [id]
+      strategy: scd1
+      tags: [daily, crm]
+    orders:
+      source:
+        system: crm
+        object: orders
+      business_key: [id]
+      strategy: scd1
+      tags: [hourly]
+
+silver:
+  tables:
+    customer_enriched:
+      logic: notebooks/customer_enriched.sql
+      business_key: [id]
+      strategy: replace
+      depends_on: [customer, orders]
+      tags: [daily]
+"""
+
+
+def test_tags_run_only_the_tables_carrying_one_of_them(tmp_path: Path):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+    adapter = FakeAdapter()
+
+    digest = run_pipeline(config_path, adapter=adapter, execution_id=1, tags=["crm", "hourly"])
+
+    assert sorted(adapter.calls) == ["bronze.customer", "bronze.orders"]
+    assert digest.results["silver.customer_enriched"].status == TableStatus.SKIPPED
+
+
+def test_exclude_tags_leave_those_tables_out(tmp_path: Path):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+    adapter = FakeAdapter()
+
+    run_pipeline(config_path, adapter=adapter, execution_id=1, exclude_tags=["hourly"])
+
+    assert sorted(adapter.calls) == ["bronze.customer", "silver.customer_enriched"]
+
+
+def test_a_tag_run_notes_the_inputs_it_did_not_refresh(tmp_path: Path):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+
+    digest = run_pipeline(config_path, adapter=FakeAdapter(), execution_id=1, tags=["daily"])
+
+    assert digest.results["silver.customer_enriched"].notes == [
+        "input not refreshed: bronze.orders"
+    ]
+    assert digest.exit_code == 0
+
+
+def test_an_unknown_tag_raises_before_anything_runs(tmp_path: Path):
+    from pipetree.graph.errors import UnknownTagError
+
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+    adapter = FakeAdapter()
+
+    with pytest.raises(UnknownTagError):
+        run_pipeline(config_path, adapter=adapter, execution_id=1, tags=["weekly"])
+
+    assert adapter.calls == []
+
+
+def test_an_empty_selection_raises_instead_of_a_silent_successful_run(tmp_path: Path):
+    from pipetree.graph.errors import EmptySelectionError
+
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+
+    with pytest.raises(EmptySelectionError):
+        run_pipeline(
+            config_path,
+            adapter=FakeAdapter(),
+            execution_id=1,
+            tags=["crm"],
+            exclude_tags=["crm"],
+        )
+
+
+def test_the_run_log_records_the_requested_tags_on_every_row(tmp_path: Path):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+    writer = InMemoryRunLogWriter()
+
+    run_pipeline(
+        config_path,
+        adapter=FakeAdapter(),
+        execution_id=7,
+        tags=["daily"],
+        exclude_tags=["crm"],
+        run_log_writer=writer,
+    )
+
+    assert {tuple(row["run_tags"]) for row in writer.rows_for(7)} == {("daily",)}
+
+
+def test_the_run_log_has_empty_run_tags_without_a_tag_filter(tmp_path: Path):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+    writer = InMemoryRunLogWriter()
+
+    run_pipeline(config_path, adapter=FakeAdapter(), execution_id=7, run_log_writer=writer)
+
+    assert {tuple(row["run_tags"]) for row in writer.rows_for(7)} == {()}
+
+
+def test_the_partial_run_warning_also_covers_a_tag_run(tmp_path: Path, caplog):
+    config_path = write_config(tmp_path, TAGGED_CONFIG)
+
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        run_pipeline(config_path, adapter=FakeAdapter(), execution_id=1, tags=["daily"])
+
+    assert any("without --with-dependents" in r.getMessage() for r in caplog.records)

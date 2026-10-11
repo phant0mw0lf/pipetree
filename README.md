@@ -95,6 +95,10 @@ nothing runs on a parent that was left out. `--init` is the run-level
 full-reload parameter: every selected table
 is seeded from scratch rather than merged against what's already there.
 
+Tables can carry `tags: [daily, crm]` in the YAML; `--tag daily` (repeatable, OR) and
+`--exclude-tag` pick them, and a table that runs while a parent does not gets the
+note `input not refreshed`.
+
 ## Seeing the run
 
 The package builds the tree from the edges; it can also draw it, and keep

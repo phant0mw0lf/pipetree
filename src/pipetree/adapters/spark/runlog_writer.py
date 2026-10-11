@@ -33,6 +33,7 @@ _SCHEMA = StructType(
         # Last on purpose: mergeSchema appends a new column at the end of an
         # existing table, so a fresh and an evolved run log share column order.
         StructField("null_keys_dropped", LongType(), nullable=True),
+        StructField("run_tags", ArrayType(StringType()), nullable=True),
     ]
 )
 

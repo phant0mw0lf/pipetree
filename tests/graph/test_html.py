@@ -430,3 +430,112 @@ def test_snapshot_with_notes():
     if os.environ.get("PIPETREE_UPDATE_SNAPSHOTS"):
         SNAPSHOT_NOTES.write_text(html, encoding="utf-8")
     assert SNAPSHOT_NOTES.read_text(encoding="utf-8") == html
+
+
+SNAPSHOT_TAGS = Path(__file__).parent / "snapshots" / "small_graph_tags.html"
+
+
+def tagged_graph():
+    graph = small_graph()
+    tags = {
+        "bronze.customer": ["daily", "crm"],
+        "bronze.orders": ["daily"],
+        "silver.orders": ["daily"],
+        "gold.fact_sales": ["reporting"],
+    }
+    return make_graph(
+        {fqn: table.strategy for fqn, table in graph.tables.items()},
+        edges={fqn: set(parents) for fqn, parents in graph.edges.items()},
+        tags=tags,
+    )
+
+
+def partial_run_states() -> dict[str, NodeState]:
+    skipped = NodeState(ProgressStatus.SKIPPED)
+    return {
+        "bronze.customer": skipped,
+        "bronze.employee": skipped,
+        "silver.customer_enriched": skipped,
+        "gold.dim_customer": skipped,
+        "bronze.orders": NodeState(ProgressStatus.SUCCEEDED, attempt=1, duration_ms=900),
+        "silver.orders": NodeState(ProgressStatus.SUCCEEDED, attempt=1, duration_ms=700),
+        "gold.fact_sales": NodeState(
+            ProgressStatus.SUCCEEDED,
+            attempt=1,
+            duration_ms=500,
+            notes=("input not refreshed: gold.dim_customer",),
+        ),
+    }
+
+
+def tooltip_of(html: str, fqn: str) -> str:
+    return next(t for t in parse(html).titles if t.split("\n")[0] == fqn)
+
+
+def test_the_tooltip_lists_a_tables_tags_and_omits_the_line_without_any():
+    html = render_html(tagged_graph())
+
+    assert "tags: daily, crm" in tooltip_of(html, "bronze.customer").split("\n")
+    assert not any(
+        line.startswith("tags:") for line in tooltip_of(html, "bronze.employee").split("\n")
+    )
+
+
+def test_a_table_outside_the_run_says_it_was_not_selected():
+    html = render_html(tagged_graph(), partial_run_states())
+
+    assert "not selected" in tooltip_of(html, "bronze.customer").split("\n")
+    assert "not selected" not in tooltip_of(html, "bronze.orders")
+    assert {a["data-status"] for a in nodes(html) if a["data-fqn"] == "bronze.customer"} == {
+        "skipped"
+    }
+
+
+def test_an_unrefreshed_input_note_gets_the_badge_the_tooltip_and_the_header_count():
+    html = render_html(tagged_graph(), partial_run_states())
+
+    noted = [str(a["data-fqn"]) for a in nodes(html) if a.get("data-notes")]
+    assert noted == ["gold.fact_sales"]
+    assert "notes:\n  input not refreshed: gold.dim_customer" in tooltip_of(html, "gold.fact_sales")
+    assert "1 with notes" in html
+
+
+def test_the_digest_notes_column_shows_the_unrefreshed_input():
+    graph = tagged_graph()
+    digest = RunDigest(
+        execution_id=1,
+        results={
+            "gold.fact_sales": TableResult(
+                "gold.fact_sales",
+                TableStatus.SUCCEEDED,
+                1,
+                1,
+                2,
+                5,
+                details={"inputs_not_refreshed": ["gold.dim_customer"]},
+            )
+        },
+    )
+
+    html = render_html(graph, states_from_digest(digest), digest=digest)
+
+    assert "<th>notes</th>" in html
+    assert "input not refreshed: gold.dim_customer</td>" in html
+
+
+def test_tags_are_html_escaped_in_the_tooltip():
+    graph = make_graph({"bronze.a": "scd1"}, tags={"bronze.a": [EVIL]})
+
+    html = render_html(graph)
+
+    assert "<script" not in html
+    assert not any("onerror" in attrs for _tag, attrs in parse(html).tags)
+
+
+def test_snapshot_of_a_partial_run_with_tags():
+    html = render_html(
+        tagged_graph(), partial_run_states(), execution_id=1, title="snapshot", elapsed_s=3.0
+    )
+    if os.environ.get("PIPETREE_UPDATE_SNAPSHOTS"):
+        SNAPSHOT_TAGS.write_text(html, encoding="utf-8")
+    assert SNAPSHOT_TAGS.read_text(encoding="utf-8") == html

@@ -10,6 +10,7 @@ pipetree run --config pipeline.yaml                                   # everythi
 pipetree run --config pipeline.yaml --select bronze.orders,silver.orders
 pipetree run --config pipeline.yaml --select bronze.orders --with-dependents
 pipetree run --config pipeline.yaml --select gold.fact_sales --with-ancestors
+pipetree run --config pipeline.yaml --tag daily                       # tables tagged daily
 pipetree run --config pipeline.yaml --init                            # full reload
 pipetree run --config pipeline.yaml --max-workers 8
 ```
@@ -19,11 +20,13 @@ pipetree run --config pipeline.yaml --max-workers 8
 | `--select a,b` | Run only these tables (fqn or unambiguous bare name). The rest is `skipped`. |
 | `--with-dependents` | Add every table downstream of the selection. Use it when a table changed: its children are rebuilt too. |
 | `--with-ancestors` | Add every table the selection reads, transitively. Rebuilds one output with all its inputs. |
+| `--tag NAME` | Run only tables carrying this tag. Repeatable: a table needs at least one. See [Tags](../tags/). |
+| `--exclude-tag NAME` | Never run tables carrying this tag, even if a `--with-*` flag pulls them in. Repeatable. |
 | `--init` | Full reload: every selected table is seeded from scratch instead of merged. See [Merge options](../../merge/merge-options/). |
 | `--max-workers N` | Tables running at the same time. Default 4. |
 | `--live-html FILE` | Keep a picture of the run in a file that refreshes itself. |
 
-With both `--with-*` flags the dependents are added first, then the ancestors of everything that runs, so nothing runs on a parent that was left out. `--select` without `--with-dependents` logs a warning: the run can leave `_execution_id` out of step across the tree.
+With both `--with-*` flags the dependents are added first, then the ancestors of everything that runs, so nothing runs on a parent that was left out. `--select` or `--tag` without `--with-dependents` logs a warning: the run can leave `_execution_id` out of step across the tree. A table that runs while a table it reads does not gets the note `input not refreshed: <table>`; see [Tags](../tags/#inputs-that-are-not-refreshed).
 
 ## Failures
 
