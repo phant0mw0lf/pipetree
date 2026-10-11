@@ -214,8 +214,9 @@ See the blog series for the full design rationale. In short:
   fully qualified name from `table_schema` (defaulting to its layer) + its
   block key.
 - **Graph builder** (`pipetree.graph`) — derives the dependency tree (`auto`
-  parses SQL `FROM`/`JOIN` or PySpark `spark.table(...)`/`spark.sql(...)`
-  literals; `depends_on` lists are matched by fqn or, if unambiguous, by bare
+  parses the logic file: Spark SQL with sqlglot, PySpark with `ast`, and
+  fails with a clear error for a table name only known at run time;
+  `depends_on` lists are matched by fqn or, if unambiguous, by bare
   table name), sorts it topologically, and reports a cycle's full path if it
   finds one. `select.py` resolves `--select`/`--with-dependents` to a set of
   fqns to run; `render.py` draws the tree as text or Mermaid, `html.py`
