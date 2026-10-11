@@ -38,18 +38,21 @@ bronze:
         delete_when: "isdelete = true"
         delete_mode: soft
         ignore_columns: [modifiedon]
+      tags: [daily]
     orders:
       source:
         system: erp_d365
         object: SalesOrderHeader
       business_key: [order_id]
       strategy: scd1
+      tags: [daily]
     employee:
       source:
         system: hr_sqlserver
         object: dbo.Employee
       business_key: [employee_id]
       strategy: scd1
+      tags: [daily]
 
 silver:
   tables:
@@ -58,11 +61,13 @@ silver:
       business_key: [accountid]
       strategy: replace
       depends_on: auto
+      tags: [daily]
     orders:
       logic: notebooks/silver/orders.sql
       business_key: [order_id]
       strategy: replace
       depends_on: auto
+      tags: [daily]
 
 gold:
   tables:
@@ -72,8 +77,10 @@ gold:
       unknown_member: true
       strategy: scd2
       depends_on: auto
+      tags: [daily, reporting]
     fact_sales:
       logic: notebooks/gold/fact_sales.py
       business_key: [order_id]
       strategy: replace
       depends_on: auto
+      tags: [daily, reporting]
