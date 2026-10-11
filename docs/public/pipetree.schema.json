@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pipetree pipeline",
+  "description": "A pipetree pipeline config. Every top-level key except `defaults` and `systems` is a layer.",
+  "type": "object",
+  "properties": {
+    "defaults": {
+      "$ref": "#/$defs/Defaults"
+    },
+    "systems": {
+      "type": "object",
+      "description": "Systems by name. Tables reference them in `source.system`.",
+      "additionalProperties": {
+        "$ref": "#/$defs/System"
+      }
+    }
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/Layer"
+  },
+  "$defs": {
+    "Defaults": {
+      "properties": {
+        "system_columns": {
+          "default": [
+            "_inserted_at",
+            "_updated_at",
+            "_is_deleted",
+            "_execution_id",
+            "_source_system"
+          ],
+          "description": "Names of the audit columns. Read from the config but not used to select columns: pipetree stamps its fixed audit set on every table.",
+          "items": {
+            "type": "string"
+          },
+          "title": "System Columns",
+          "type": "array"
+        },
+        "schema_policy": {
+          "default": "evolve",
+          "description": "Schema drift policy for every table that does not set its own.",
+          "enum": [
+            "evolve",
+            "fail",
+            "ignore"
+          ],
+          "title": "Schema Policy",
+          "type": "string"
+        }
+      },
+      "title": "Defaults",
+      "type": "object"
+    },
+    "Layer": {
+      "title": "Layer",
+      "description": "A layer: a namespace for tables, not an execution barrier.",
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "object",
+          "description": "Tables by name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/Table"
+          }
+        }
+      },
+      "required": [
+        "tables"
+      ]
+    },
+    "Merge": {
+      "properties": {
+        "sequence_by": {
+          "description": "Source columns that order the versions of a key. The highest value wins.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Sequence By",
+          "type": "array"
+        },
+        "delete_when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Spark SQL expression, true for source rows that are deletes.",
+          "title": "Delete When"
+        },
+        "delete_mode": {
+          "default": "soft",
+          "description": "What a delete row does: soft marks the row deleted, hard removes it (scd1 only), ignore drops delete rows from the batch.",
+          "enum": [
+            "soft",
+            "hard",
+            "ignore"
+          ],
+          "title": "Delete Mode",
+          "type": "string"
+        },
+        "ignore_columns": {
+          "description": "Columns whose changes alone are written in place: no new scd2 version and no audit column update.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Ignore Columns",
+          "type": "array"
+        }
+      },
+      "title": "Merge",
+      "type": "object"
+    },
+    "Source": {
+      "properties": {
+        "system": {
+          "description": "Name of a system declared under `systems`.",
+          "title": "System",
+          "type": "string"
+        },
+        "object": {
+          "description": "What to read from the system: a table, entity or file name the reader understands.",
+          "title": "Object",
+          "type": "string"
+        }
+      },
+      "required": [
+        "system",
+        "object"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "System": {
+      "additionalProperties": true,
+      "description": "A declared system. Connection properties beyond `type` vary per source\ntype (host, database, landing_path, ...), so they're captured as extras\nrather than hardcoded here - `pipetree.sources` owns interpreting them.",
+      "properties": {
+        "type": {
+          "description": "Source type: csv, json, parquet, sqlserver, kusto, storage_stream, d365_export, synapse_link or custom. Other keys are passed to the source reader.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "System",
+      "type": "object"
+    },
+    "Table": {
+      "properties": {
+        "table_schema": {
+          "description": "Schema the table is created in. Defaults to the layer name.",
+          "title": "Table Schema",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Read from a declared system. Exactly one of `source` and `logic`."
+        },
+        "logic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to a .sql or .py file, relative to the config. Exactly one of `source` and `logic`.",
+          "title": "Logic"
+        },
+        "business_key": {
+          "description": "Columns that identify a row. Required for scd1, scd2 and unknown_member.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Business Key",
+          "type": "array"
+        },
+        "strategy": {
+          "description": "How the result is written to the table.",
+          "enum": [
+            "scd2",
+            "scd1",
+            "replace",
+            "append"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "merge": {
+          "$ref": "#/$defs/Merge",
+          "description": "Options for the scd1 and scd2 strategies."
+        },
+        "depends_on": {
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "`auto` reads the logic file; a list names parent tables (fqn or unambiguous bare name).",
+          "title": "Depends On"
+        },
+        "unknown_member": {
+          "default": false,
+          "description": "Seed one row with a sentinel business key for facts to resolve a missing key to.",
+          "title": "Unknown Member",
+          "type": "boolean"
+        },
+        "schema_policy": {
+          "description": "Schema drift policy for this table. Defaults to `defaults.schema_policy`.",
+          "enum": [
+            "evolve",
+            "fail",
+            "ignore"
+          ],
+          "title": "Schema Policy",
+          "type": "string"
+        },
+        "surrogate_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of a generated integer key column (scd1 and scd2 only). The unknown member gets -1.",
+          "title": "Surrogate Key"
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "title": "Table",
+      "type": "object",
+      "description": "One table. Exactly one of `source` and `logic`.",
+      "oneOf": [
+        {
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "required": [
+            "logic"
+          ]
+        }
+      ]
+    }
+  }
+}
