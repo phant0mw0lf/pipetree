@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from pipetree.executor.status import RunDigest
 from pipetree.model import Notifications, SecretRef
 from pipetree.notify.acs_email import EmailNotifier, RunContext
 from pipetree.notify.credential import credential_for
@@ -19,8 +20,9 @@ def build_notifier(
     if notifications is not None and notifications.email is not None:
         email = notifications.email
         endpoint = _endpoint(email.endpoint, platform)
-        notifiers.append(
-            EmailNotifier(
+
+        def make_email() -> Notifier:
+            return EmailNotifier(
                 endpoint=endpoint,
                 sender=email.sender,
                 to=list(email.to),
@@ -28,8 +30,21 @@ def build_notifier(
                 on=email.on,
                 context=context,
             )
-        )
+
+        notifiers.append(_OnFailure(make_email))
     return CompositeNotifier(notifiers)
+
+
+class _OnFailure:
+    """Builds its notifier (SDK check, credential, secrets) only for a run that
+    is not succeeded, so a successful run touches none of it."""
+
+    def __init__(self, factory: Callable[[], Notifier]) -> None:
+        self._factory = factory
+
+    def notify(self, digest: RunDigest) -> None:
+        if not digest.succeeded:
+            self._factory().notify(digest)
 
 
 def _endpoint(value: str | SecretRef, platform: Platform) -> str | Callable[[], str]:
