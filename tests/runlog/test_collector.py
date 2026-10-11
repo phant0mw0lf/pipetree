@@ -39,6 +39,7 @@ def test_build_run_log_rows_includes_core_fields_from_graph_and_result():
             "error_type": None,
             "error_message": None,
             "null_keys_dropped": None,
+            "run_tags": [],
         }
     ]
 
@@ -143,3 +144,35 @@ def test_build_run_log_rows_carries_null_keys_dropped():
     )
 
     assert build_run_log_rows(digest, graph)[0]["null_keys_dropped"] == 4
+
+
+def _digest_for(graph):
+    return RunDigest(
+        execution_id=1,
+        results={
+            fqn: TableResult(
+                table_fqn=fqn,
+                status=TableStatus.SUCCEEDED,
+                attempts=1,
+                started_at=1,
+                ended_at=2,
+                duration_ms=1,
+            )
+            for fqn in graph.tables
+        },
+    )
+
+
+def test_run_tags_are_the_tags_requested_for_the_run_on_every_row():
+    graph = make_graph({"bronze.a": "scd1", "bronze.b": "scd1"})
+
+    rows = build_run_log_rows(_digest_for(graph), graph, run_tags=["daily", "crm"])
+
+    assert [row["run_tags"] for row in rows] == [["daily", "crm"], ["daily", "crm"]]
+
+
+def test_run_tags_are_an_empty_list_when_no_tag_was_requested():
+    graph = make_graph({"bronze.a": "scd1"})
+
+    assert build_run_log_rows(_digest_for(graph), graph)[0]["run_tags"] == []
+    assert build_run_log_rows(_digest_for(graph), graph, run_tags=None)[0]["run_tags"] == []

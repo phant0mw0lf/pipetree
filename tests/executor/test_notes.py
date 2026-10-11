@@ -52,3 +52,20 @@ def test_table_event_from_result_carries_the_notes():
 
 def test_table_event_notes_default_to_empty():
     assert TableEvent("bronze.a", ProgressStatus.RUNNING, 1).notes == ()
+
+
+def test_an_input_that_was_not_refreshed_is_one_note_per_parent():
+    notes = notes_for({"inputs_not_refreshed": ["bronze.a", "bronze.b"]})
+
+    assert notes == ["input not refreshed: bronze.a", "input not refreshed: bronze.b"]
+
+
+def test_input_notes_come_after_the_merge_notes():
+    notes = notes_for({"duplicates_dropped": 1, "inputs_not_refreshed": ["bronze.a"]})
+
+    assert notes == ["1 duplicate row(s) dropped", "input not refreshed: bronze.a"]
+
+
+def test_no_unrefreshed_inputs_adds_nothing():
+    assert notes_for({"inputs_not_refreshed": []}) == []
+    assert notes_for({"inputs_not_refreshed": None}) == []

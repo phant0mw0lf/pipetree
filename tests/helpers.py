@@ -10,11 +10,16 @@ from pipetree.graph.builder import Graph
 from pipetree.model import Strategy, Table
 
 
-def make_graph(strategies: dict[str, Strategy], edges: dict[str, set[str]] | None = None) -> Graph:
+def make_graph(
+    strategies: dict[str, Strategy],
+    edges: dict[str, set[str]] | None = None,
+    tags: dict[str, list[str]] | None = None,
+) -> Graph:
     """Build a Graph directly from fqn -> strategy (+ optional fqn -> parent fqns),
     bypassing YAML/config entirely - executor tests care about scheduling, not
-    about how the graph got built."""
+    about how the graph got built. `tags` maps fqn -> that table's tags."""
     edges = edges or {}
+    tags = tags or {}
     tables = {
         fqn: Table(
             name=fqn.split(".")[-1],
@@ -24,6 +29,7 @@ def make_graph(strategies: dict[str, Strategy], edges: dict[str, set[str]] | Non
             strategy=strategy,
             business_key=[],
             depends_on=sorted(edges.get(fqn, ())),
+            tags=tags.get(fqn, []),
         )
         for fqn, strategy in strategies.items()
     }
