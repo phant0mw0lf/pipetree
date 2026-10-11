@@ -18,7 +18,13 @@ No `workspace.host` is set in `databricks.yml` - it relies on your
 if you haven't authenticated this machine yet.
 
 The job takes these parameters (bundle variables): `catalog` (default
-`main`), `key_vault_url` and `key_vault_credential` (both empty by default).
+`main`), `key_vault_url` and `key_vault_credential` (both empty by default),
+and `tags` (comma separated, empty runs every table). To run only the tables
+tagged `reporting`:
+
+```bash
+databricks bundle run pipetree_example -t dev --var tags=reporting
+```
 
 ## Secrets from Key Vault
 

@@ -6,8 +6,10 @@ pipetree_example`) - see README.md for the exact commands and the Key Vault
 setup.
 
 Parameters (positional, matching databricks.yml): catalog, key_vault_url,
-key_vault_credential. The last two are optional: leave them empty for a
-pipeline without `{secret: ...}` values.
+key_vault_credential, tags. The last three are optional: leave the Key Vault
+ones empty for a pipeline without `{secret: ...}` values, and `tags` empty to
+run every table. `tags` is comma separated (`daily, crm`): a table runs when it
+carries at least one of them.
 """
 
 from __future__ import annotations
@@ -20,15 +22,17 @@ from pyspark.sql import SparkSession
 from pipetree import run_pipeline
 from pipetree.adapters.spark.adapter import SparkAdapter
 from pipetree.config.loader import load_config
+from pipetree.graph.select import split_names
 from pipetree.model import PipelineConfig
 from pipetree.platform.databricks import DatabricksPlatform
 
 CATALOG = sys.argv[1] if len(sys.argv) > 1 else "main"
 KEY_VAULT_URL = (sys.argv[2] if len(sys.argv) > 2 else "") or None
 KEY_VAULT_CREDENTIAL = (sys.argv[3] if len(sys.argv) > 3 else "") or None
+TAGS = split_names(sys.argv[4] if len(sys.argv) > 4 else "")
 CONFIG_PATH = (
-    Path(sys.argv[4])
-    if len(sys.argv) > 4
+    Path(sys.argv[5])
+    if len(sys.argv) > 5
     else Path(__file__).resolve().parent.parent / "pipeline.yaml"
 )
 
@@ -61,7 +65,7 @@ def main() -> int:
         spark, systems=config.systems, base_dir=CONFIG_PATH.parent, platform=platform
     )
 
-    digest = run_pipeline(CONFIG_PATH, adapter=adapter)
+    digest = run_pipeline(CONFIG_PATH, adapter=adapter, tags=TAGS or None)
     return digest.exit_code
 
 
