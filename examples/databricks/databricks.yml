@@ -8,10 +8,30 @@
 bundle:
   name: pipetree-example
 
+# The job reads pipeline.yaml, its logic notebooks and the CSV paths relative to
+# examples/, which is one level above this bundle. Syncing `../` keeps that
+# layout in the workspace (`${workspace.file_path}/pipeline.yaml`).
+sync:
+  paths:
+    - ../
+    - .
+
 variables:
+  spark_version:
+    description: Databricks Runtime of the job cluster. Service credentials need 16.2+ (or 15.4 LTS).
+    default: "15.4.x-scala2.12"
+  node_type_id:
+    description: VM size of the single-node job cluster; pick one your subscription has quota for.
+    default: "Standard_DS3_v2" # Azure SKU; swap for your cloud
   catalog:
     description: Unity Catalog catalog to write the example tables into
     default: main
+
+  tags:
+    description: >
+      Comma separated tags: only tables carrying at least one of them run, for
+      example "daily, crm". Empty runs every table.
+    default: ""
   key_vault_url:
     description: >
       Key Vault to read `{secret: name}` values from, for example
@@ -23,12 +43,6 @@ variables:
       Name of the Unity Catalog service credential (created from an Access
       Connector for Azure Databricks) that reads the vault. Empty with an
       empty key_vault_url.
-    default: ""
-
-  tags:
-    description: >
-      Comma separated tags: only tables carrying at least one of them run, for
-      example "daily, crm". Empty runs every table.
     default: ""
 
 artifacts:
@@ -46,21 +60,27 @@ resources:
           new_cluster:
             # Pin to a runtime available in your workspace. Service
             # credentials need 16.2+ (or 15.4 LTS).
-            spark_version: "15.4.x-scala2.12"
-            node_type_id: "Standard_DS3_v2" # Azure SKU; swap for your cloud
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
             num_workers: 0 # single-node is enough for the example's data
             data_security_mode: SINGLE_USER
-          spark_python_task:
-            python_file: ./run_on_databricks.py
-            # No config_path parameter: run_on_databricks.py resolves it
-            # relative to its own synced location (`__file__`), which is
-            # robust regardless of the task's working directory - a
-            # relative path parameter here would not be.
-            parameters:
-              - "${var.catalog}"
-              - "${var.key_vault_url}"
-              - "${var.key_vault_credential}"
-              - "${var.tags}"
+            # num_workers: 0 alone gives a cluster that has no worker and cannot
+            # run Spark; a single-node cluster also needs these two settings.
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*]"
+            custom_tags:
+              ResourceClass: SingleNode
+          notebook_task:
+            notebook_path: ./run_on_databricks.py
+            # The config path inside the workspace files is passed
+            # explicitly: a notebook has no reliable `__file__`.
+            base_parameters:
+              catalog: ${var.catalog}
+              key_vault_url: ${var.key_vault_url}
+              key_vault_credential: ${var.key_vault_credential}
+              tags: ${var.tags}
+              config_path: ${workspace.file_path}/pipeline.yaml
           libraries:
             - whl: ../../dist/*.whl
 
