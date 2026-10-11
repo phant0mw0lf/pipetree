@@ -20,13 +20,15 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
 from html import escape
 
 from pipetree.executor.events import ProgressStatus, TableEvent, progress_status
+from pipetree.executor.notes import notes_for
 from pipetree.executor.status import RunDigest, TableResult, TableStatus
 from pipetree.graph.builder import Graph
+from pipetree.graph.select import inputs_not_refreshed
 from pipetree.graph.waves import compute_waves, layer_of, layer_order, wave_columns
 
 THEMES = ("auto", "light", "dark")
@@ -64,6 +66,22 @@ def states_from_digest(digest: RunDigest) -> dict[str, NodeState]:
 
 
 StateValue = NodeState | ProgressStatus | str
+
+
+def preview_states(graph: Graph, run_set: Set[str] | None) -> dict[str, NodeState] | None:
+    """States for a picture of a run that has not happened: the tables the run
+    would cover are pending (with the notes they would get), the rest skipped."""
+    if run_set is None:
+        return None
+    unrefreshed = inputs_not_refreshed(graph, set(run_set))
+    states: dict[str, NodeState] = {}
+    for fqn in graph.tables:
+        if fqn not in run_set:
+            states[fqn] = NodeState(ProgressStatus.SKIPPED)
+        else:
+            notes = notes_for({"inputs_not_refreshed": unrefreshed.get(fqn, [])})
+            states[fqn] = NodeState(notes=tuple(notes))
+    return states
 
 
 # --- layout ---------------------------------------------------------------
@@ -382,6 +400,10 @@ def _node(
     if state.duration_ms is not None:
         tip.append(f"duration: {_fmt_seconds(state.duration_ms / 1000)}")
     tip.append(f"wave {wave} · layer {layer}")
+    if state.status == ProgressStatus.SKIPPED:
+        tip.append("not selected")
+    if tags := graph.tables[fqn].tags:
+        tip.append("tags: " + ", ".join(tags))
     parents = sorted(graph.edges.get(fqn, ()))
     tip.append("depends on: " + (", ".join(parents) if parents else "nothing (a root)"))
     if state.error_type or state.error_message:
