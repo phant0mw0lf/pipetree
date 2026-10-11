@@ -9,9 +9,9 @@ executor can use directly.
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 DEFAULT_SYSTEM_COLUMNS = [
     "_inserted_at",
@@ -41,7 +41,7 @@ SchemaPolicy = Literal["evolve", "fail", "ignore"]
 Strategy = Literal["scd2", "scd1", "replace", "append"]
 DeleteMode = Literal["soft", "hard", "ignore"]
 
-RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems"}
+RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems", "notifications"}
 
 # A tag: lowercase letters, digits, `-` and `_`; starts with a letter or digit.
 TAG_MAX_LENGTH = 40
@@ -59,6 +59,50 @@ class SecretRef(BaseModel):
 # A system/table connection property is either a literal value or a secret
 # reference - the same value resolves differently per environment.
 SecretOrLiteral = str | SecretRef
+
+
+_ADDRESS = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+def _check_address(value: str) -> str:
+    if not _ADDRESS.fullmatch(value):
+        raise ValueError(f"{value!r} is not an email address")
+    return value
+
+
+EmailAddress = Annotated[str, AfterValidator(_check_address)]
+
+
+class EmailNotification(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint: SecretOrLiteral = Field(
+        description="Endpoint of the Azure Communication Services resource, "
+        "`https://<resource>.communication.azure.com`. A literal or `{secret: name}`."
+    )
+    sender: EmailAddress = Field(
+        description="Sender address of a domain connected to the resource, "
+        "for example `DoNotReply@<guid>.azurecomm.net`."
+    )
+    to: list[EmailAddress] = Field(
+        min_length=1,
+        description="Recipient addresses. At least one.",
+    )
+    on: Literal["failure"] = Field(
+        default="failure",
+        description="When to send. `failure` mails a run in which a table failed or "
+        "was marked upstream_failed. No mail for a successful run.",
+    )
+
+
+class Notifications(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    email: EmailNotification | None = Field(
+        default=None,
+        description="Email a failed run through Azure Communication Services, "
+        "authenticated with a token credential (no connection string).",
+    )
 
 
 class Defaults(BaseModel):
@@ -183,6 +227,9 @@ class PipelineConfig(BaseModel):
     defaults: Defaults = Field(description="Resolved defaults.")
     systems: dict[str, System] = Field(description="Declared systems by name.")
     tables: dict[str, Table] = Field(description="Every table by fully qualified name.")
+    notifications: Notifications | None = Field(
+        default=None, description="Optional notification settings."
+    )
 
     @classmethod
     def from_validated_raw(cls, raw: dict[str, Any]) -> PipelineConfig:
@@ -200,7 +247,13 @@ class PipelineConfig(BaseModel):
                 table = _build_table(layer_name, table_name, table_raw, defaults)
                 tables[table.fqn] = table
 
-        return cls(defaults=defaults, systems=systems, tables=tables)
+        notifications_raw = raw.get("notifications")
+        notifications = (
+            Notifications.model_validate(notifications_raw)
+            if notifications_raw is not None
+            else None
+        )
+        return cls(defaults=defaults, systems=systems, tables=tables, notifications=notifications)
 
 
 def _build_table(

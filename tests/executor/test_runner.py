@@ -129,6 +129,9 @@ def test_failing_table_marks_descendants_upstream_failed_independent_branch_stil
     assert digest.results["bronze.a"].status == TableStatus.FAILED
     assert digest.results["silver.b"].status == TableStatus.UPSTREAM_FAILED
     assert digest.results["gold.c"].status == TableStatus.UPSTREAM_FAILED
+    # the digest remembers which failed table the skip traces back to
+    assert digest.results["silver.b"].details["failed_ancestor"] == "bronze.a"
+    assert digest.results["gold.c"].details["failed_ancestor"] == "bronze.a"
     assert digest.results["bronze.d"].status == TableStatus.SUCCEEDED
     assert not digest.succeeded
 

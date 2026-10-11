@@ -7,6 +7,7 @@ run` CLI invocation, a Databricks job task, or a Fabric notebook calls.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,13 +18,16 @@ from pipetree.executor.status import RunDigest
 from pipetree.graph.builder import build_graph
 from pipetree.graph.select import resolve_run_set
 from pipetree.model import PipelineConfig
+from pipetree.notify.acs_email import RunContext
+from pipetree.notify.build import build_notifier
+from pipetree.platform.local import LocalPlatform
 from pipetree.runlog.collector import build_run_log_rows
-from pipetree.runlog.notifier import ConsoleNotifier
 from pipetree.runlog.writer import InMemoryRunLogWriter
 
 if TYPE_CHECKING:
     from pipetree.adapters.base import Adapter
     from pipetree.executor.events import ObserverArg
+    from pipetree.platform.base import Platform
     from pipetree.runlog.notifier import Notifier
     from pipetree.runlog.writer import RunLogWriter
 
@@ -50,6 +54,7 @@ def run_pipeline(
     with_ancestors: bool = False,
     init: bool = False,
     observer: ObserverArg = None,
+    platform: Platform | None = None,
 ) -> RunDigest:
     """Load `config_path`, build the dependency graph, and run it.
 
@@ -75,6 +80,13 @@ def run_pipeline(
     `pipetree.notebook.HtmlFileObserver` writing an auto-refreshing HTML
     file. Its callbacks arrive on the calling thread; one that raises is
     disabled, never fatal.
+
+    With no `notifier`, the console digest is printed and the config's
+    `notifications` block adds its channels (an email for a failed run). A
+    notifier that raises is logged as a warning and never changes the run:
+    the returned digest and its exit code are the same either way.
+    `platform` supplies the identity for those channels; it defaults to the
+    platform of the adapter.
     """
     config_path = Path(config_path)
     raw = load_config(config_path)
@@ -97,7 +109,7 @@ def run_pipeline(
         )
 
     if adapter is None:
-        adapter = _default_spark_adapter(config, config_path.parent)
+        adapter = _default_spark_adapter(config, config_path.parent, platform)
 
     digest = _execute(
         graph,
@@ -113,12 +125,51 @@ def run_pipeline(
     writer = run_log_writer or InMemoryRunLogWriter()
     writer.write(build_run_log_rows(digest, graph, tags), execution_id=digest.execution_id)
 
-    (notifier or ConsoleNotifier()).notify(digest)
+    _notify(
+        digest,
+        notifier,
+        config,
+        platform or getattr(adapter, "platform", None),
+        RunContext(
+            select=select,
+            with_dependents=with_dependents,
+            with_ancestors=with_ancestors,
+            init=init,
+        ),
+    )
 
     return digest
 
 
-def _default_spark_adapter(config: PipelineConfig, base_dir: Path) -> Adapter:
+def _notify(
+    digest: RunDigest,
+    notifier: Notifier | None,
+    config: PipelineConfig,
+    platform: Platform | None,
+    context: RunContext,
+) -> None:
+    """Tell whoever should know. Never raises: the run is already over and its
+    result must not depend on a mail server."""
+    try:
+        if notifier is None:
+            platform = platform or LocalPlatform()
+            context = replace(context, run_metadata=platform.run_metadata())
+            notifier = build_notifier(config.notifications, platform, context)
+        notifier.notify(digest)
+    except Exception as exc:
+        # Only the exception types: a message can carry a body or a credential.
+        _logger.warning("notification failed (%s); the run is unaffected", _describe(exc))
+
+
+def _describe(exc: BaseException) -> str:
+    if isinstance(exc, BaseExceptionGroup):
+        return ", ".join(_describe(member) for member in exc.exceptions)
+    return type(exc).__name__
+
+
+def _default_spark_adapter(
+    config: PipelineConfig, base_dir: Path, platform: Platform | None = None
+) -> Adapter:
     # Imported lazily: pyspark is the optional 'spark' extra, and code that
     # supplies its own adapter (tests, a future platform adapter) shouldn't
     # have to install it.
@@ -132,4 +183,4 @@ def _default_spark_adapter(config: PipelineConfig, base_dir: Path) -> Adapter:
     # there. Only build a new local session when nothing is already
     # running - true on a laptop, never true on a real cluster.
     spark = SparkSession.getActiveSession() or build_local_session()
-    return SparkAdapter(spark, systems=config.systems, base_dir=base_dir)
+    return SparkAdapter(spark, systems=config.systems, base_dir=base_dir, platform=platform)

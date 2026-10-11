@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from pipetree.config.errors import ConfigError
 from pipetree.model import (
@@ -21,9 +22,10 @@ from pipetree.model import (
     RESERVED_AUDIT_COLUMNS,
     TAG_MAX_LENGTH,
     TAG_PATTERN,
+    Notifications,
 )
 
-RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems"}
+RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems", "notifications"}
 # Order matches the post's schema (`scd2 | scd1 | replace | append`,
 # `soft | hard | ignore`), not alphabetical, so error messages read the way
 # the docs do.
@@ -51,11 +53,23 @@ def validate_raw(raw: Any) -> None:
 
     systems = raw.get("systems", {})
     _validate_systems(systems)
+    _validate_notifications(raw.get("notifications"))
 
     for layer_name, layer in raw.items():
         if layer_name in RESERVED_TOP_LEVEL_KEYS:
             continue
         _validate_layer(layer_name, layer, systems)
+
+
+def _validate_notifications(block: Any) -> None:
+    if block is None:
+        return
+    try:
+        Notifications.model_validate(block)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        location = ".".join(["notifications", *(str(part) for part in first["loc"])])
+        raise ConfigError(path=location, reason=first["msg"]) from exc
 
 
 def _validate_systems(systems: Any) -> None:

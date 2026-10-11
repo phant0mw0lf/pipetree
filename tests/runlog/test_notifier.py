@@ -1,5 +1,7 @@
 import io
 
+import pytest
+
 from pipetree.executor.status import RunDigest, TableResult, TableStatus
 from pipetree.runlog.notifier import ConsoleNotifier, Notifier, format_digest
 
@@ -100,3 +102,22 @@ def test_format_digest_appends_notes_to_the_table_line():
 
     assert lines["bronze.a"].endswith("  notes: 2 duplicate row(s) dropped; schema: added: x")
     assert "notes" not in lines["bronze.b"]
+
+
+def test_composite_notifier_runs_every_member_even_if_one_raises():
+    from pipetree.runlog.notifier import CompositeNotifier
+
+    seen: list[str] = []
+
+    class Boom:
+        def notify(self, digest):
+            raise RuntimeError("x")
+
+    class Ok:
+        def notify(self, digest):
+            seen.append("ok")
+
+    digest = RunDigest(execution_id=1, results={})
+    with pytest.raises(ExceptionGroup):
+        CompositeNotifier([Boom(), Ok()]).notify(digest)
+    assert seen == ["ok"]

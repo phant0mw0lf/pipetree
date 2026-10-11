@@ -264,3 +264,11 @@ def test_acquire_token_raises_without_dbutils():
 
     with pytest.raises(ValueError, match="dbutils"):
         platform.acquire_token("https://database.windows.net/")
+
+
+def test_can_acquire_token_reports_configured_resources():
+    platform = DatabricksPlatform(
+        catalog="main", service_credentials={"https://communication.azure.com": "acs"}
+    )
+    assert platform.can_acquire_token("https://communication.azure.com")
+    assert not platform.can_acquire_token("https://database.windows.net")

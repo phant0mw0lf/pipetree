@@ -9,6 +9,7 @@ protocol once there's a workspace to post to (parts 3/4).
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from typing import Protocol, TextIO, runtime_checkable
 
 from pipetree.executor.status import RunDigest, TableStatus
@@ -35,6 +36,24 @@ def format_digest(digest: RunDigest) -> str:
         lines.append(line)
 
     return "\n".join(lines)
+
+
+class CompositeNotifier:
+    """Notifies every member, in order. A member that raises does not stop the
+    others; the errors are raised together once all have run."""
+
+    def __init__(self, notifiers: Sequence[Notifier]) -> None:
+        self._notifiers = list(notifiers)
+
+    def notify(self, digest: RunDigest) -> None:
+        errors: list[Exception] = []
+        for notifier in self._notifiers:
+            try:
+                notifier.notify(digest)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("notifiers failed", errors)
 
 
 class ConsoleNotifier:

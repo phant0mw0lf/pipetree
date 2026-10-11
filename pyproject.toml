@@ -50,6 +50,7 @@ spark = [
 azure = [
     "azure-identity>=1.19",
     "azure-keyvault-secrets>=4.8",
+    "azure-communication-email>=1.0",
 ]
 
 [dependency-groups]

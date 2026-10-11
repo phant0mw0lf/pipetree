@@ -177,6 +177,7 @@ def _mark_upstream_failed(
             started_at=now,
             ended_at=now,
             duration_ms=0,
+            details={"failed_ancestor": failed_fqn},
         )
         if emit is not None:
             emit(TableEvent.from_result(results[fqn]))
