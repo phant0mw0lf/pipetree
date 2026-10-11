@@ -8,6 +8,7 @@ executor can use directly.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +42,10 @@ Strategy = Literal["scd2", "scd1", "replace", "append"]
 DeleteMode = Literal["soft", "hard", "ignore"]
 
 RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems"}
+
+# A tag: lowercase letters, digits, `-` and `_`; starts with a letter or digit.
+TAG_MAX_LENGTH = 40
+TAG_PATTERN = re.compile(rf"^[a-z0-9][a-z0-9_-]{{0,{TAG_MAX_LENGTH - 1}}}$")
 
 
 class SecretRef(BaseModel):
@@ -164,6 +169,12 @@ class Table(BaseModel):
         description="Name of a generated integer key column (scd1 and scd2 only). "
         "The unknown member gets -1.",
     )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Labels for selecting tables with `pipetree run --tag`. Lowercase letters, "
+        "digits, `-` and `_`, starting with a letter or digit, at most 40 characters, "
+        "no duplicates within a table.",
+    )
 
 
 class PipelineConfig(BaseModel):
@@ -212,4 +223,5 @@ def _build_table(
         unknown_member=table_raw.get("unknown_member", False),
         schema_policy=table_raw.get("schema_policy", defaults.schema_policy),
         surrogate_key=table_raw.get("surrogate_key"),
+        tags=table_raw.get("tags", []),
     )

@@ -51,6 +51,7 @@ Under `<layer>.tables.<name>`.
 | `unknown_member` | boolean | `false` | Seed one row with a sentinel business key for facts to resolve a missing key to. |
 | `schema_policy` | "evolve" \| "fail" \| "ignore" | - | Schema drift policy for this table. Defaults to `defaults.schema_policy`. |
 | `surrogate_key` | string \| null | `null` | Name of a generated integer key column (scd1 and scd2 only). The unknown member gets -1. |
+| `tags` | list[string] | `[]` | Labels for selecting tables with `pipetree run --tag`. Lowercase letters, digits, `-` and `_`, starting with a letter or digit, at most 40 characters, no duplicates within a table. |
 
 ## Source
 

@@ -16,7 +16,12 @@ from typing import Any
 import yaml
 
 from pipetree.config.errors import ConfigError
-from pipetree.model import DELETE_MARKER_COLUMN, RESERVED_AUDIT_COLUMNS
+from pipetree.model import (
+    DELETE_MARKER_COLUMN,
+    RESERVED_AUDIT_COLUMNS,
+    TAG_MAX_LENGTH,
+    TAG_PATTERN,
+)
 
 RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems"}
 # Order matches the post's schema (`scd2 | scd1 | replace | append`,
@@ -118,6 +123,29 @@ def _validate_table(path: str, table: Any, systems: dict[str, Any]) -> None:
 
     if "surrogate_key" in table:
         _validate_surrogate_key(f"{path}.surrogate_key", table, strategy)
+
+    if "tags" in table:
+        _validate_tags(f"{path}.tags", table["tags"])
+
+
+def _validate_tags(path: str, tags: Any) -> None:
+    if not isinstance(tags, list):
+        raise ConfigError(path=path, reason="must be a list of tag names")
+    seen: set[str] = set()
+    for i, tag in enumerate(tags):
+        if not isinstance(tag, str):
+            raise ConfigError(path=f"{path}[{i}]", reason=f"must be a string, not {tag!r}")
+        if not TAG_PATTERN.fullmatch(tag):
+            raise ConfigError(
+                path=f"{path}[{i}]",
+                reason=(
+                    f"{tag!r} is not a valid tag: use lowercase letters, digits, '-' and '_', "
+                    f"starting with a letter or digit, at most {TAG_MAX_LENGTH} characters"
+                ),
+            )
+        if tag in seen:
+            raise ConfigError(path=f"{path}[{i}]", reason=f"duplicate tag {tag!r}")
+        seen.add(tag)
 
 
 def _validate_surrogate_key(path: str, table: dict[str, Any], strategy: str) -> None:

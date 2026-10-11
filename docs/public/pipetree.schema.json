@@ -249,6 +249,14 @@
           "default": null,
           "description": "Name of a generated integer key column (scd1 and scd2 only). The unknown member gets -1.",
           "title": "Surrogate Key"
+        },
+        "tags": {
+          "description": "Labels for selecting tables with `pipetree run --tag`. Lowercase letters, digits, `-` and `_`, starting with a letter or digit, at most 40 characters, no duplicates within a table.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
         }
       },
       "required": [
