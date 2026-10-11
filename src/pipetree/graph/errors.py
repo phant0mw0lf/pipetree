@@ -36,6 +36,26 @@ class UnknownTableError(GraphError):
         )
 
 
+class UnknownTagError(GraphError):
+    """A requested `--tag` / `--exclude-tag` that no table carries."""
+
+    def __init__(self, name: str, known: list[str]):
+        self.name = name
+        self.known = known
+        available = (
+            f"known tags: {', '.join(known)}" if known else "no table has tags in this config"
+        )
+        super().__init__(f"no table is tagged {name!r} - {available}")
+
+
+class EmptySelectionError(GraphError):
+    """The selection options together leave no table to run."""
+
+    def __init__(self, detail: str = ""):
+        suffix = f" ({detail})" if detail else ""
+        super().__init__(f"no table is left to run after applying the selection options{suffix}")
+
+
 class DependencyParseError(GraphError, ValueError):
     """`depends_on: auto` cannot read a dependency out of a logic file: the
     file does not parse, or a table name is only known at run time. The

@@ -15,7 +15,7 @@ from pipetree.executor.retry import RetryPolicy
 from pipetree.executor.runner import run_pipeline as _execute
 from pipetree.executor.status import RunDigest
 from pipetree.graph.builder import build_graph
-from pipetree.graph.select import resolve_selection
+from pipetree.graph.select import resolve_run_set
 from pipetree.model import PipelineConfig
 from pipetree.runlog.collector import build_run_log_rows
 from pipetree.runlog.notifier import ConsoleNotifier
@@ -44,6 +44,8 @@ def run_pipeline(
     run_log_writer: RunLogWriter | None = None,
     notifier: Notifier | None = None,
     select: list[str] | None = None,
+    tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
     with_dependents: bool = False,
     with_ancestors: bool = False,
     init: bool = False,
@@ -61,6 +63,11 @@ def run_pipeline(
     CI/CD mode from part 1, where a changed table's dependents get rebuilt
     too. `with_ancestors` extends it to everything the selection transitively
     reads (a gold table with all its upstream tables); both can be combined.
+    `tags` runs the tables carrying at least one of the given tags (it
+    intersects with `select`, and the closures extend the result);
+    `exclude_tags` is applied last and wins. A tag no table carries, or a
+    selection that ends up empty, raises a `GraphError`. A table that runs
+    while a direct parent does not gets the note `input not refreshed`.
     `init` is the run-level "full reload" parameter.
 
     `observer` (a `RunObserver`, or a list of them) watches the run while it
@@ -74,10 +81,17 @@ def run_pipeline(
     config = PipelineConfig.from_validated_raw(raw)
     graph = build_graph(config, base_dir=config_path.parent)
 
-    selected = resolve_selection(graph, select, with_dependents, with_ancestors)
+    selected = resolve_run_set(
+        graph,
+        select=select,
+        tags=tags,
+        exclude_tags=exclude_tags,
+        with_dependents=with_dependents,
+        with_ancestors=with_ancestors,
+    )
     if selected is not None and not with_dependents:
         _logger.warning(
-            "running a subtree in isolation (--select without --with-dependents) can leave "
+            "running a subtree in isolation (--select/--tag without --with-dependents) can leave "
             "_execution_id out of step across the tree, depending on how the incremental "
             "load resolves it"
         )
@@ -97,7 +111,7 @@ def run_pipeline(
     )
 
     writer = run_log_writer or InMemoryRunLogWriter()
-    writer.write(build_run_log_rows(digest, graph), execution_id=digest.execution_id)
+    writer.write(build_run_log_rows(digest, graph, tags), execution_id=digest.execution_id)
 
     (notifier or ConsoleNotifier()).notify(digest)
 

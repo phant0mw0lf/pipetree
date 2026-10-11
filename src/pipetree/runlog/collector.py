@@ -7,17 +7,22 @@ through its future); shaped and written once, at the end - see
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from pipetree.executor.status import RunDigest
 from pipetree.graph.builder import Graph
 
 
-def build_run_log_rows(digest: RunDigest, graph: Graph) -> list[dict[str, Any]]:
-    return [_row_for(fqn, digest, graph) for fqn in digest.results]
+def build_run_log_rows(
+    digest: RunDigest, graph: Graph, run_tags: Sequence[str] | None = None
+) -> list[dict[str, Any]]:
+    """`run_tags`: the tags requested for the run, repeated on every row."""
+    tags = list(run_tags or [])
+    return [_row_for(fqn, digest, graph, tags) for fqn in digest.results]
 
 
-def _row_for(fqn: str, digest: RunDigest, graph: Graph) -> dict[str, Any]:
+def _row_for(fqn: str, digest: RunDigest, graph: Graph, run_tags: list[str]) -> dict[str, Any]:
     result = digest.results[fqn]
     table = graph.tables[fqn]
     details = result.details
@@ -38,4 +43,5 @@ def _row_for(fqn: str, digest: RunDigest, graph: Graph) -> dict[str, Any]:
         "error_type": result.error_type,
         "error_message": result.error_message,
         "null_keys_dropped": details.get("null_keys_dropped"),
+        "run_tags": run_tags,
     }
