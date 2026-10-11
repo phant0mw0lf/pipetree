@@ -26,7 +26,7 @@ adapter = SparkAdapter(
 digest = run_pipeline(CONFIG_PATH, adapter=adapter)
 ```
 
-The job takes three parameters: `catalog`, `key_vault_url` and `key_vault_credential`. The last two are empty for a pipeline without secrets. The bundle uses the `databricks` CLI's default auth profile.
+The job takes three parameters: `catalog`, `key_vault_url` and `key_vault_credential`. The last two are empty for a pipeline without secrets. The optional `acs_credential` names the service credential that sends the [failure email](../notifications/). The bundle uses the `databricks` CLI's default auth profile.
 
 ## Secrets
 

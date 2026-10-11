@@ -28,7 +28,7 @@ No `workspace.host` is set in `databricks.yml` - it relies on your
 if you haven't authenticated this machine yet.
 
 The job takes these parameters (bundle variables): `catalog` (default
-`main`), `key_vault_url` and `key_vault_credential` (both empty by default),
+`main`), `key_vault_url`, `key_vault_credential` and `acs_credential` (all empty by default),
 `tags` (comma separated, empty runs every table) and `spark_version` and `node_type_id` of the single-node job cluster. The
 defaults are examples: pick a runtime and a VM size your subscription has
 quota for. The tables are written to `catalog`; use a catalog without tables
@@ -59,6 +59,19 @@ Vault names: letters, digits and hyphens. Service credentials need
 Databricks Runtime 16.2+ (or 15.4 LTS), Python only, on the driver; they are
 not available on SQL warehouses. `azure-keyvault-secrets` (the `azure`
 extra) must be installed on the cluster.
+
+## Failure email
+
+A `notifications.email` block in the pipeline YAML mails a failed run through
+Azure Communication Services (see the Notifications guide in the docs). On
+Databricks the mail is sent with a Unity Catalog service credential: create
+one from the Access Connector, give its identity the role
+`Communication and Email Service Owner` on the Communication Services
+resource, grant `ACCESS` on it to the principal that runs the job, and set
+`acs_credential` to its name. The notebook registers it as
+`service_credentials["https://communication.azure.com"]`.
+`azure-communication-email` (the `azure` extra) must be installed on the
+cluster.
 
 ## Notes
 
