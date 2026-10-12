@@ -930,19 +930,19 @@ def test_soft_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
     assert [r[2] for r in _snapshot(spark, table)] == [True]
 
 
-@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
-def test_hard_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
-    table = _del_table("hard_seq", strategy, "hard")
+def test_hard_delete_row_with_the_higher_sequence_still_wins(spark):
+    table = _del_table("hard_seq", "scd1", "hard")
     _del_run(spark, table, [(1, "a", False, 1)], 1)
 
     result = _del_run(spark, table, [(1, "a", False, 2), (1, "a", True, 5)], 2)
 
     assert result["duplicates_dropped"] == 1
-    if strategy == "scd1":
-        assert _snapshot(spark, table) == []
-    else:
-        # scd2 hard delete: the history is kept, closed
-        assert [(r[0], r[4]) for r in _snapshot(spark, table)] == [(1, False)]
+    assert _snapshot(spark, table) == []
+
+
+def test_scd2_with_hard_delete_is_rejected():
+    with pytest.raises(ValueError, match="scd2 cannot be combined with delete_mode: hard"):
+        _del_table("hard_seq", "scd2", "hard")
 
 
 # ------------------------------------------------- ignore_columns (ignore_columns alone update in
