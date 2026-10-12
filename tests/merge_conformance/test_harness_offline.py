@@ -225,7 +225,7 @@ def test_scd2_version_order_is_total_for_late_versions_of_equal_sequence():
 # consistent history next to it is clean, so a check is not simply always on.
 
 
-def R(id, e, *, ins=None, upd=None, src="gen", **extra):
+def R(id, e, *, ins=None, upd=None, src: str | None = "gen", **extra):
     """A raw scd1 row inserted by batch `ins` (default e), last written by batch `upd`."""
     row = {"id": id, "v": "a", "w": None, "seq": None, "op": "U"}
     row.update(
