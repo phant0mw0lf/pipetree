@@ -37,6 +37,8 @@ A failed run can also be mailed with all notes of every table. See [Notification
 
 It applies to scd1 and scd2. `replace` takes whatever the source says. `append` does not enforce a policy. Every non-empty diff is recorded as a note.
 
+A column that `evolve` adds is empty (NULL) in the rows that already exist. Only a row that is new or whose existing columns change is written with a value for the new column; an unchanged row keeps NULL there, and so does its current scd2 version. To fill the column for every row, reload the table with `init`.
+
 ## Run log
 
 One row per table and run, in `_meta.pipeline_run_log` when the `DeltaRunLogWriter` is used. The `pipetree run` command and `run_pipeline` keep the rows in memory unless you pass `run_log_writer`.
