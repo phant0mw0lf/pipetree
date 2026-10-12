@@ -229,6 +229,14 @@ class Table(BaseModel):
         "no duplicates within a table.",
     )
 
+    @model_validator(mode="after")
+    def _scd2_cannot_hard_delete(self) -> Table:
+        if self.strategy == "scd2" and self.merge.delete_mode == "hard":
+            raise ValueError(
+                "scd2 cannot be combined with delete_mode: hard (it would destroy history)"
+            )
+        return self
+
 
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
