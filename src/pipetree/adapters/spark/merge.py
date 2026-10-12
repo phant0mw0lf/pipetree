@@ -186,6 +186,13 @@ def merge_scd1(
         soft_delete_values: dict[str, str | Column] = {
             **update_audit_values(execution_id, source_system, now),
             "_is_deleted": F.lit(True),
+            # The delete row's sequence_by values are stored, so a later row with a lower
+            # sequence is ignored by not_older (sequence columns are ordinary source columns).
+            **{
+                c: f"source.{c}"
+                for c in table.merge.sequence_by
+                if c in columns and c not in table.business_key
+            },
         }
         merge_builder = merge_builder.whenMatchedUpdate(
             # Deleting an already soft-deleted row is a no-op (re-runs are safe).

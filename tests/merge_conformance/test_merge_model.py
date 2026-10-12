@@ -191,7 +191,7 @@ def test_delete_and_normal_row_in_one_batch_resolve_by_sequence():
         first = B({"id": 1, "v": "a"})
         delete_wins = B(D(1, seq=5), {"id": 1, "v": "b", "seq": 1})
         state, _ = apply_batch(t, apply_batch(t, [], first, 1)[0], delete_wins, 2)
-        assert state == ([R(1, "a", e=2, d=True)] if mode == "soft" else [])
+        assert state == ([R(1, "a", seq=5, e=2, d=True)] if mode == "soft" else [])
         normal_wins = B(D(1, seq=1), {"id": 1, "v": "b", "seq": 5})
         state, _ = apply_batch(t, apply_batch(t, [], first, 1)[0], normal_wins, 2)
         assert state == [R(1, "b", seq=5, e=2)]
@@ -478,7 +478,7 @@ def test_scd1_older_soft_delete_is_ignored_newer_applies():
     state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "op": "D", "seq": 2}))
     assert state == [R(1, "a", seq=5, e=1)]
     state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}), B({"id": 1, "op": "D", "seq": 7}))
-    assert state == [R(1, "a", seq=5, e=2, d=True)]
+    assert state == [R(1, "a", seq=7, e=2, d=True)]
 
 
 def test_scd1_returning_soft_deleted_key_compares_against_stored_sequence():
@@ -486,9 +486,13 @@ def test_scd1_returning_soft_deleted_key_compares_against_stored_sequence():
     deleted = B({"id": 1, "op": "D", "seq": 7})
     first = B({"id": 1, "v": "a", "seq": 5})
     state, _ = run(t, first, deleted, B({"id": 1, "v": "old", "seq": 3}))
-    assert state == [R(1, "a", seq=5, e=2, d=True)]
+    assert state == [R(1, "a", seq=7, e=2, d=True)]  # the delete's sequence is stored
     state, _ = run(t, first, deleted, B({"id": 1, "v": "back", "seq": 6}))
-    assert state == [R(1, "back", seq=6, e=3)]
+    assert state == [R(1, "a", seq=7, e=2, d=True)]
+    state, _ = run(t, first, deleted, B({"id": 1, "v": "equal", "seq": 7}))
+    assert state == [R(1, "equal", seq=7, e=3)]
+    state, _ = run(t, first, deleted, B({"id": 1, "v": "back", "seq": 8}))
+    assert state == [R(1, "back", seq=8, e=3)]
 
 
 def test_scd1_null_sequence_sorts_lowest():
