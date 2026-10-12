@@ -121,3 +121,20 @@ def test_schema_policy_can_be_overridden_per_table():
     config = PipelineConfig.from_validated_raw(raw)
 
     assert config.tables["bronze.customer"].schema_policy == "fail"
+
+
+def test_table_rejects_scd2_with_hard_delete():
+    import pytest
+
+    from pipetree.model import Table
+
+    with pytest.raises(ValueError, match="scd2 cannot be combined with delete_mode: hard"):
+        Table(
+            name="t",
+            layer="silver",
+            table_schema="silver",
+            fqn="silver.t",
+            strategy="scd2",
+            business_key=["id"],
+            merge=Merge(delete_mode="hard"),
+        )
