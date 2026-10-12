@@ -42,7 +42,7 @@ def _check_valid(case: Case, strategy: str) -> None:
         groups: dict[tuple, list[dict]] = {}
         for row in batch:
             assert set(row) == cols
-            assert row["op"] in ("U", "D")
+            assert row["op"] in ("U", "D", None)
             assert row["op"] == "U" or t.has_delete
             k = tuple(row[c] for c in t.key)
             if row["op"] == "U" and all(v is not None for v in k):

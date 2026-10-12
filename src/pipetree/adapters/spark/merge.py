@@ -764,7 +764,9 @@ def _without_ignored_deletes(df: DataFrame, table: Table) -> DataFrame:
 def _prepare_source(df: DataFrame, table: Table) -> DataFrame:
     if table.merge.delete_mode == "ignore" or not table.merge.delete_when:
         return df.withColumn(_IS_DELETE_COL, F.lit(False))
-    return df.withColumn(_IS_DELETE_COL, F.expr(table.merge.delete_when))
+    # A NULL result is not a delete (merge-options docs): without the coalesce the flag is
+    # neither true nor false and no merge clause matches, so the row would be lost.
+    return df.withColumn(_IS_DELETE_COL, F.coalesce(F.expr(table.merge.delete_when), F.lit(False)))
 
 
 def _key_condition(table: Table) -> str:
