@@ -1,11 +1,23 @@
 """Pure-Python tests of the conformance case generator (no Spark)."""
 
+from datetime import datetime
+from decimal import Decimal
+
 import pytest
 
 from pipetree.testing.merge_gen import COVERAGE_NAMES, Case, coverage, generate_case
 from pipetree.testing.merge_model import apply_batch
 
 STRATEGIES = ("replace", "append", "scd1", "scd2")
+TYPE_OPTION_NAMES = {
+    "sequence_timestamp",
+    "sequence_string",
+    "sequence_decimal",
+    "sequence_double",
+    "sequence_in_ignore_columns",
+    "surrogate_key_without_unknown_member",
+    "composite_sequence_mixed_types",
+}
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
@@ -33,7 +45,24 @@ def _check_valid(case: Case, strategy: str) -> None:
         assert t.strategy in ("scd1", "scd2")
         assert case.delete_when == "op = 'D'"
     if case.surrogate_key is not None:
-        assert t.strategy in ("scd1", "scd2") and t.unknown_member
+        assert t.strategy in ("scd1", "scd2")  # with or without unknown_member
+    assert set(case.column_types) <= set(t.sequence_by)  # only sequence columns are retyped
+    assert not set(t.ignore) & set(t.key)
+    if "seq" in t.ignore:
+        assert t.strategy in ("scd1", "scd2") and "seq" in t.sequence_by
+    py_types = {
+        "int": int,
+        "timestamp": datetime,
+        "string": str,
+        "decimal(10,2)": Decimal,
+        "double": float,
+    }
+    for c in t.sequence_by:
+        py = py_types[case.column_types.get(c, "int")]
+        for batch in case.batches:
+            for row in batch:
+                assert row[c] is None or type(row[c]) is py, (case.repr_line(), c, row[c])
+                assert row[c] is None or row[c] == row[c]  # never NaN
     assert 2 <= len(case.batches) <= 6
     assert all(0 <= i < len(case.batches) for i in case.inits)
     keys_seen = set()
@@ -101,6 +130,13 @@ def test_coverage_names_are_the_documented_ones():
         "partial_null_key",
         "late_older_sequence",
         "init_midway",
+        "sequence_timestamp",
+        "sequence_string",
+        "sequence_decimal",
+        "sequence_double",
+        "sequence_in_ignore_columns",
+        "surrogate_key_without_unknown_member",
+        "composite_sequence_mixed_types",
     }
 
 
@@ -137,7 +173,31 @@ def test_coverage_detects_each_property_on_hand_built_cases():
         batches=batches,
         inits=frozenset({5}),
     )
-    assert coverage(case) == set(COVERAGE_NAMES)
+    assert coverage(case) == set(COVERAGE_NAMES) - TYPE_OPTION_NAMES
+
+    # The type options are detected too.
+    typed = Case(
+        seed=-1,
+        table=ModelTable(
+            strategy="scd1",
+            key=("a", "b"),
+            columns=cols,
+            sequence_by=("seq", "w"),
+            ignore=("seen", "seq"),
+        ),
+        delete_when=None,
+        surrogate_key="sid",
+        batches=[],
+        inits=frozenset(),
+        column_types={"seq": "timestamp", "w": "double"},
+    )
+    assert coverage(typed) == {
+        "sequence_timestamp",
+        "sequence_double",
+        "sequence_in_ignore_columns",
+        "surrogate_key_without_unknown_member",
+        "composite_sequence_mixed_types",
+    }
 
     # A case without any of it covers nothing.
     plain = Case(
@@ -149,3 +209,24 @@ def test_coverage_detects_each_property_on_hand_built_cases():
         inits=frozenset(),
     )
     assert coverage(plain) == set()
+
+
+def test_cases_without_a_type_option_keep_integer_sequences():
+    plain = 0
+    for strategy in STRATEGIES:
+        for seed in range(100):
+            case = generate_case(seed, strategy)
+            if case.column_types:
+                continue
+            plain += 1
+            assert all(type(r["seq"]) in (int, type(None)) for b in case.batches for r in b)
+    assert plain > 100
+
+
+def test_every_typed_sequence_value_is_a_python_value_of_its_column_type():
+    seen: set[str] = set()
+    for seed in range(100):
+        for strategy in ("scd1", "scd2"):
+            case = generate_case(seed, strategy)
+            seen |= set(case.column_types.values())
+    assert seen == {"timestamp", "string", "decimal(10,2)", "double"}

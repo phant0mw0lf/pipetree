@@ -179,6 +179,8 @@ def normalise_model(state: list[dict], t: ModelTable) -> list[dict]:
 
 
 def _column_type(case: Case, col: str) -> str:
+    if col in case.column_types:
+        return case.column_types[col]
     if col in _INT_COLUMNS:
         return "int"
     if col != "id":
