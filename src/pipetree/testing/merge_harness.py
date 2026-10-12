@@ -7,9 +7,15 @@ this module can be imported without Spark.
 
 Comparison (``normalise``): the business columns + ``_is_deleted`` +
 ``_execution_id`` (+ ``_is_current`` for scd2), rows in a canonical order
-(key tuple with NULL first; scd2 versions by ``_valid_from``). Timestamps are
-never compared by value, only by relation (invariants). The unknown-member
+(key tuple with NULL first; scd2 versions by ``_valid_from``). The unknown-member
 row is compared without its ``_execution_id``.
+
+The other audit columns (``_inserted_at``, ``_updated_at``, ``_source_system``,
+``_valid_from``, ``_valid_to``) are checked by ``check_audit``, independent of the
+model: the harness injects a deterministic clock (``clock(execution_id)``, one tick per
+batch, see ``_Runner.run``), so every timestamp has an exact expected value derived from
+the ``_execution_id`` of the row (which the model comparison pins), plus relations to the
+previous snapshot (an untouched row keeps its ``_updated_at``, ``_inserted_at`` never moves).
 
 The model is the reference model (``merge_model.apply_batch``) by default. Any
 object with ``apply_batch(table, state, batch, execution_id, *, init)`` and
@@ -32,6 +38,7 @@ import pprint
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
+from unittest import mock
 
 from pipetree.testing.merge_gen import Case, generate_case
 from pipetree.testing.merge_model import ModelTable, apply_batch, is_unknown_member
@@ -60,7 +67,23 @@ INVARIANTS = (
     "sid_changed",
     "sid_reused",
     "idempotence",
+    "source_system_value",
+    "updated_at_value",
+    "updated_at_bump",
+    "inserted_at_value",
+    "scd2_valid_from_value",
+    "scd2_valid_to_value",
 )
+
+# The source system every generated table reads from (`build_table`); every row the merge
+# writes carries it in `_source_system` (the unknown member is seeded without one).
+SOURCE_SYSTEM = "gen"
+
+
+def clock(execution_id: int) -> int:
+    """The deterministic `now` of the batch with this execution id (a `YYMMddHHmmssSSS`-shaped
+    bigint, strictly increasing with the execution id, 1 s apart)."""
+    return 260101000000000 + execution_id * 1000
 
 
 class Model(Protocol):
@@ -213,7 +236,7 @@ def build_table(case: Case, schema: str = "mc") -> Any:
         "fqn": f"{schema}.{name}",
         "strategy": t.strategy,
         "business_key": list(t.key),
-        "source": {"system": "gen", "object": name},
+        "source": {"system": SOURCE_SYSTEM, "object": name},
         "merge": {
             "sequence_by": list(t.sequence_by),
             "delete_when": case.delete_when,
@@ -368,6 +391,96 @@ def check_invariants(
     return problems
 
 
+def check_audit(
+    case: Case, batch_index: int, prev: list[dict] | None, raw: list[dict]
+) -> list[tuple[str, str]]:
+    """The audit columns the model does not carry, against the injected clock
+    (``clock(execution_id)``) and the previous snapshot, as ``(invariant name, message)``.
+
+    Contract: ``_updated_at`` is the time of the batch that last wrote the row's tracked values
+    (the one in its ``_execution_id``; an ``ignore_columns``-only change moves neither),
+    ``_inserted_at`` is the time of the batch that created the row and never changes,
+    ``_source_system`` is the table's source. scd2: a current version has ``_valid_from`` =
+    ``_inserted_at`` and no ``_valid_to``; a version closed by a change or delete has
+    ``_valid_to`` = the time of the closing batch (the successor's ``_valid_from`` is checked by
+    the scd2 invariants); a late version (sequence_by) has an empty interval that starts before it
+    was inserted. The unknown member is exempt from what depends on its ``_execution_id`` (seeding
+    time) and from ``_source_system``."""
+    t = case.table
+    now = clock(batch_index + 1)
+    scd = t.strategy in ("scd1", "scd2")
+    rebuilt = batch_index in case.inits or t.strategy == "replace" or prev is None
+    unknown = _unknown_rows(t, raw)
+    old = {_identity(t, p): p for p in prev or []} if scd and not rebuilt else {}
+    problems: list[tuple[str, str]] = []
+    for r in raw:
+        member = r in unknown
+        if not member:
+            if r["_source_system"] != SOURCE_SYSTEM:
+                problems.append(
+                    ("source_system_value", f"_source_system {r['_source_system']!r}: {r}")
+                )
+            if r["_updated_at"] != clock(r["_execution_id"]):
+                problems.append(
+                    (
+                        "updated_at_value",
+                        f"_updated_at {r['_updated_at']} is not the time of its _execution_id "
+                        f"({clock(r['_execution_id'])}): {r}",
+                    )
+                )
+            # a row created by this batch (scd: no row of that identity before) is inserted now;
+            # append/replace rows are never touched after their batch
+            expect = now if scd and _identity(t, r) not in old else None
+            if not scd:
+                expect = clock(r["_execution_id"])
+            if expect is not None and r["_inserted_at"] != expect:
+                problems.append(
+                    (
+                        "inserted_at_value",
+                        f"_inserted_at {r['_inserted_at']}, expected {expect}: {r}",
+                    )
+                )
+            before = old.get(_identity(t, r))
+            if before is not None:
+                moved = r["_execution_id"] != before["_execution_id"]
+                if moved != (r["_updated_at"] != before["_updated_at"]) or (
+                    r["_updated_at"] < before["_updated_at"]
+                ):
+                    problems.append(
+                        (
+                            "updated_at_bump",
+                            "_updated_at and _execution_id must move together, forward: "
+                            f"{before} -> {r}",
+                        )
+                    )
+        if t.strategy == "scd2":
+            problems += _scd2_audit(r, member)
+    return problems
+
+
+def _scd2_audit(r: dict, member: bool) -> list[tuple[str, str]]:
+    if r["_valid_to"] is None:
+        if r["_valid_from"] != r["_inserted_at"]:
+            return [("scd2_valid_from_value", f"current version, _valid_from != _inserted_at: {r}")]
+        return []
+    if r["_valid_to"] == r["_valid_from"]:  # empty interval: a late version
+        if r["_valid_from"] >= r["_inserted_at"]:
+            return [("scd2_valid_from_value", f"empty interval not before insertion: {r}")]
+        return []
+    out = []
+    if r["_valid_from"] != r["_inserted_at"]:
+        out.append(("scd2_valid_from_value", f"_valid_from != _inserted_at: {r}"))
+    if not member and r["_valid_to"] != clock(r["_execution_id"]):
+        out.append(
+            (
+                "scd2_valid_to_value",
+                f"_valid_to {r['_valid_to']} is not the time of the closing batch "
+                f"({clock(r['_execution_id'])}): {r}",
+            )
+        )
+    return out
+
+
 def _scd2_invariants(t: ModelTable, raw: list[dict]) -> list[tuple[str, str]]:
     problems: list[tuple[str, str]] = []
     by_key: dict[tuple, list[dict]] = {}
@@ -461,6 +574,7 @@ class _Comparator:
             out.append(Divergence(case, i, "stats", "\n".join(stat_problems)))
 
         out += self._invariants(i, check_invariants(case, i, self.prev, raw, self.sid_owner))
+        out += self._invariants(i, check_audit(case, i, self.prev, raw))
         if out and self.attribution:
             self.state = state_from_table(raw, t)  # resync, keep comparing later batches
         self.prev = raw
@@ -499,6 +613,9 @@ class _Comparator:
 # ----------------------------------------------------------------- Spark run
 
 
+_CLOCK_TARGET = "pipetree.adapters.spark.merge.timestamp_bigint"
+
+
 class _Runner:
     """Runs the batches of one case against a fresh table."""
 
@@ -513,7 +630,7 @@ class _Runner:
         self._df: Any = None
         self.adapter = SparkAdapter(
             spark,
-            systems={"gen": System(type="custom")},
+            systems={SOURCE_SYSTEM: System(type="custom")},
             base_dir=".",
             read_source=lambda _table, _system: self._df,
         )
@@ -524,7 +641,10 @@ class _Runner:
         cols = self.case.table.columns
         rows = [tuple(r[c] for c in cols) for r in self.case.batches[i]]
         self._df = self.spark.createDataFrame(rows, self.ddl)
-        return self.adapter.run_table(self.table, execution_id=execution_id, init=init) or {}
+        # a deterministic clock per batch: exact expected timestamps (`check_audit`), and no two
+        # batches ever share a millisecond
+        with mock.patch(_CLOCK_TARGET, lambda now=None: clock(execution_id)):
+            return self.adapter.run_table(self.table, execution_id=execution_id, init=init) or {}
 
     def snapshot(self) -> list[dict]:
         return [r.asDict() for r in self.spark.table(self.table.fqn).collect()]

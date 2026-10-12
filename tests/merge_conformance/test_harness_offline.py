@@ -7,7 +7,9 @@ from pipetree.testing.merge_gen import STRATEGIES, Case, generate_case
 from pipetree.testing.merge_harness import (
     INVARIANTS,
     Recording,
+    check_audit,
     check_invariants,
+    clock,
     compare_recording,
     model_trajectory,
 )
@@ -134,7 +136,13 @@ def _snap(rows):
     for id_, v, seen, e in rows:
         out.append(
             {"id": id_, "v": v, "w": None, "seq": None, "op": "U", "seen": seen}
-            | {"_inserted_at": 1, "_updated_at": 1, "_is_deleted": False, "_execution_id": e}
+            | {
+                "_inserted_at": clock(e),
+                "_updated_at": clock(e),
+                "_source_system": "gen",
+                "_is_deleted": False,
+                "_execution_id": e,
+            }
         )
     return out
 
@@ -210,3 +218,108 @@ def test_scd2_version_order_is_total_for_late_versions_of_equal_sequence():
     c = row("c", 2, 2, 20, 100, None, True)
     for raw in ([c, b, a], [b, c, a], [a, c, b], [b, a, c]):
         assert [r["v"] for r in _normalise_raw(list(raw), t)] == ["a", "b", "c"]
+
+
+# ------------------------------------------------- audit columns (check_audit)
+# Each test feeds a deliberately wrong history and asserts the named check fires; the
+# consistent history next to it is clean, so a check is not simply always on.
+
+
+def R(id, e, *, ins=None, upd=None, src="gen", **extra):
+    """A raw scd1 row inserted by batch `ins` (default e), last written by batch `upd`."""
+    row = {"id": id, "v": "a", "w": None, "seq": None, "op": "U"}
+    row.update(
+        _inserted_at=clock(ins or e),
+        _updated_at=clock(upd or e),
+        _source_system=src,
+        _is_deleted=False,
+        _execution_id=upd or e,
+    )
+    return row | extra
+
+
+def S(id, e, *, vf=None, vt=None, closed_by=None, ins=None):
+    """A raw scd2 version inserted by batch `e`, closed by batch `closed_by` (or current)."""
+    row = R(id, e, ins=ins, upd=closed_by)
+    row.update(_is_current=closed_by is None, _valid_from=clock(vf or e), _valid_to=None)
+    if closed_by:
+        row["_valid_to"] = clock(closed_by)
+    if vt is not None:
+        row["_valid_to"] = vt
+    return row
+
+
+def audit(strategy, batch_index, prev, raw, **kw):
+    return names(check_audit(_case(strategy, **kw), batch_index, prev, raw))
+
+
+def test_a_consistent_audit_history_has_no_audit_problem():
+    assert audit("scd1", 1, [R(1, 1), R(2, 1)], [R(1, 1), R(2, 1, upd=2)]) == set()
+    closed, new = S(1, 1, closed_by=2), S(1, 2)
+    assert audit("scd2", 1, [S(1, 1)], [closed, new]) == set()
+    late = S(1, 3, vf=2, vt=clock(2))
+    assert audit("scd2", 2, [closed, new], [closed, late, new]) == set()
+
+
+def test_a_wrong_source_system_is_reported():
+    assert audit("scd1", 0, None, [R(1, 1, src="other")]) == {"source_system_value"}
+    assert audit("scd1", 0, None, [R(1, 1, src=None)]) == {"source_system_value"}
+
+
+def test_updated_at_that_does_not_match_the_execution_id_is_reported():
+    row = R(1, 1, upd=2)
+    row["_updated_at"] = clock(1)  # a changed row whose _updated_at was not bumped
+    assert "updated_at_value" in audit("scd1", 1, [R(1, 1)], [row])
+
+
+def test_updated_at_bumped_without_the_execution_id_is_reported():
+    """decision Q8 (ignore_columns alone move neither): bumping only one of the two."""
+    row = R(1, 1, upd=2)
+    row["_execution_id"] = 1  # _updated_at moved, _execution_id did not
+    assert "updated_at_bump" in audit("scd1", 1, [R(1, 1)], [row])
+    row = R(1, 1)
+    row["_execution_id"] = 2  # _execution_id moved, _updated_at did not
+    assert "updated_at_bump" in audit("scd1", 1, [R(1, 1)], [row])
+
+
+def test_inserted_at_must_be_the_time_of_the_inserting_batch():
+    assert audit("scd1", 1, [R(1, 1)], [R(1, 1), R(2, 2, ins=1)]) == {"inserted_at_value"}
+    # (a surviving key whose _inserted_at moved is the `inserted_at_changed` invariant)
+    assert "inserted_at_value" in audit("append", 0, None, [R(1, 1, ins=2)])
+    assert "inserted_at_value" in audit("replace", 1, [R(1, 1)], [R(1, 2, ins=1)])
+
+
+def test_a_current_scd2_version_must_start_when_it_was_inserted():
+    assert audit("scd2", 0, None, [S(1, 1, vf=2)]) == {"scd2_valid_from_value"}
+
+
+def test_a_closed_scd2_version_must_end_when_the_closing_batch_ran():
+    bad = S(1, 1, closed_by=3, vt=clock(2))
+    prev = [S(1, 1)]
+    assert audit("scd2", 2, prev, [bad, S(1, 3)]) == {"scd2_valid_to_value"}
+    assert audit("scd2", 2, prev, [S(1, 1, closed_by=3), S(1, 3)]) == set()
+
+
+def test_a_late_scd2_version_must_have_an_empty_interval_before_its_insertion():
+    assert audit("scd2", 2, None, [S(1, 3, vf=2, vt=clock(2))]) == set()
+    # empty interval, but not before the insertion (a version closed in its own batch)
+    assert audit("scd2", 2, None, [S(1, 3, vf=3, vt=clock(3))]) == {"scd2_valid_from_value"}
+
+
+def test_the_unknown_member_is_exempt_from_source_system_and_seeding_time():
+    member = R(-1, 1, src=None)
+    member["_execution_id"] = 7  # seeding time is not compared
+    kw = {"unknown_member": True, "sentinels": {"id": -1}}
+    assert audit("scd1", 0, None, [member], **kw) == set()
+
+
+def test_a_wrong_audit_value_is_a_divergence_of_the_comparison():
+    t = ModelTable(strategy="scd1", key=("id",), columns=COLS)
+    src = {"id": 1, "v": "a", "w": None, "seq": None, "op": "U"}
+    case = Case(-1, t, None, None, [[src], [src]], frozenset())
+    good = [R(1, 1)]
+    rec = Recording(snapshots=[good, good], results=[{"duplicates_dropped": 0}] * 2, rerun=good)
+    assert compare_recording(case, rec) == []
+    rec.snapshots[1] = [R(1, 1, src="elsewhere")]
+    got = compare_recording(case, rec)
+    assert [d.kind for d in got] == ["invariant"] and "[source_system_value]" in got[0].detail
