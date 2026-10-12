@@ -11,22 +11,22 @@ databricks bundle deploy -t dev
 databricks bundle run pipetree_example -t dev
 ```
 
-`databricks.yml` defines a job with a `spark_python_task` that runs `run_on_databricks.py`. The script builds a `DatabricksPlatform` and a `SparkAdapter` on the active cluster session and calls `run_pipeline`:
+`databricks.yml` defines a job with a `notebook_task` that runs `run_on_databricks.py`, a source-format notebook. It builds a `DatabricksPlatform` and a `SparkAdapter` on the cluster session and calls `run_pipeline` with a live dependency tree under the run cell:
 
 ```python
 platform = DatabricksPlatform(
     dbutils=dbutils,
-    catalog=CATALOG,
-    key_vault_url="https://my-vault.vault.azure.net",
-    key_vault_credential="pipetree-kv",  # a Unity Catalog service credential
+    catalog=catalog,
+    key_vault_url=key_vault_url,
+    key_vault_credential=key_vault_credential,  # a Unity Catalog service credential
 )
 adapter = SparkAdapter(
-    spark, systems=config.systems, base_dir=CONFIG_PATH.parent, platform=platform
+    spark, systems=config.systems, base_dir=config_path.parent, platform=platform
 )
-digest = run_pipeline(CONFIG_PATH, adapter=adapter)
+digest = run_pipeline(config_path, adapter=adapter, observer=LiveGraphView(), tags=tags or None)
 ```
 
-The job takes three parameters: `catalog`, `key_vault_url` and `key_vault_credential`. The last two are empty for a pipeline without secrets. The optional `acs_credential` names the service credential that sends the [failure email](../notifications/). The bundle uses the `databricks` CLI's default auth profile.
+The job parameters are `catalog`, `key_vault_url`, `key_vault_credential`, `tags` and the optional `acs_credential`. The vault parameters are empty for a pipeline without secrets. `tags` (comma separated) limits the run to the tables with one of those tags. `acs_credential` names the service credential that sends the [failure email](../notifications/). A failed table fails the task. The bundle uses the `databricks` CLI's default auth profile. See the folder's README for the input files and the cluster settings.
 
 ## Secrets
 
@@ -41,7 +41,7 @@ Nothing is stored in Databricks, and no shared Entra application needs access to
 
 ## Notes
 
-- `dbutils` is assumed to be injected for a `spark_python_task`. If not, use `DBUtils(spark)` from `pyspark.dbutils`.
+- `dbutils` and `spark` are injected into a notebook. In a Python file task, use `DBUtils(spark)` from `pyspark.dbutils`.
 - Table names stay `schema.table`. Set the default catalog before the run (`USE CATALOG`).
 - Runtime and node type in `databricks.yml` are examples: use values available in your workspace.
 - Token-based auth (`auth.mode: aad_token`) uses a Unity Catalog service credential per resource, configured as `service_credentials`.
