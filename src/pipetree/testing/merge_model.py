@@ -99,8 +99,16 @@ def _is_delete(table: ModelTable, row: dict) -> bool:
 
 
 def _seq(table: ModelTable, row: dict) -> tuple:
-    # None sorts lowest (desc_nulls_last picks the highest, None last).
-    return tuple((row[c] is not None, 0 if row[c] is None else row[c]) for c in table.sequence_by)
+    # Spark's order: None lowest (desc_nulls_last picks the highest, None last), NaN
+    # highest and equal to NaN, otherwise natural. Python's NaN comparisons are all False.
+    def key(v):
+        if v is None:
+            return (0, 0)
+        if v != v:  # NaN
+            return (2, 0)
+        return (1, v)
+
+    return tuple(key(row[c]) for c in table.sequence_by)
 
 
 def _differs(a: dict, b: dict, cols: list[str]) -> bool:

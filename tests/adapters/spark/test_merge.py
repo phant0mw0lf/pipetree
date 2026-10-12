@@ -291,6 +291,45 @@ def test_scd1_deduplicates_the_source_batch_and_reports_it(spark):
     assert rows(spark.table(table.fqn))[1]["name"] == "Alice v2"
 
 
+_NAN = float("nan")
+
+
+def _seq_run(spark, table, data, execution_id):
+    df = spark.createDataFrame(data, "id int, name string, seq double")
+    return _MERGE[table.strategy](spark, table, df, execution_id, "crm")
+
+
+def test_scd1_nan_sequence_is_newer_than_any_number(spark):
+    table = make_table("nan_scd1", "scd1", merge={"sequence_by": ["seq"]})
+    _seq_run(spark, table, [(1, "nan", _NAN)], 1)
+
+    _seq_run(spark, table, [(1, "older", 2.0)], 2)  # older than NaN: ignored
+    assert rows(spark.table(table.fqn))[1]["name"] == "nan"
+
+    _seq_run(spark, table, [(1, "equal", _NAN)], 3)  # NaN equals NaN: not older, wins
+    assert rows(spark.table(table.fqn))[1]["name"] == "equal"
+
+
+def test_scd1_nan_sequence_wins_the_dedupe_in_a_batch(spark):
+    table = make_table("nan_dedupe", "scd1", merge={"sequence_by": ["seq"]})
+
+    _seq_run(spark, table, [(1, "one", 1.0), (1, "nan", _NAN), (1, "two", 2.0)], 1)
+
+    assert rows(spark.table(table.fqn))[1]["name"] == "nan"
+
+
+def test_scd2_late_row_after_a_nan_version_is_placed_before_it(spark):
+    table = make_table("nan_scd2", "scd2", merge={"sequence_by": ["seq"]})
+    _seq_run(spark, table, [(1, "one", 1.0)], 1)
+    _seq_run(spark, table, [(1, "nan", _NAN)], 2)
+
+    _seq_run(spark, table, [(1, "two", 2.0)], 3)
+
+    versions = spark.table(table.fqn).collect()
+    assert sorted(r["name"] for r in versions) == ["nan", "one", "two"]
+    assert [r["name"] for r in versions if r["_is_current"]] == ["nan"]
+
+
 # ------------------------------------------------------------------ scd2
 
 
