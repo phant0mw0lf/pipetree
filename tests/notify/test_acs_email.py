@@ -281,3 +281,25 @@ def test_missing_sdk_raises_a_clear_error(monkeypatch: pytest.MonkeyPatch):
 def test_unsupported_on_value_is_rejected():
     with pytest.raises(ValueError, match="on"):
         make_notifier(on="always")
+
+
+def test_mail_shows_the_requested_tags_and_the_input_not_refreshed_note():
+    digest = RunDigest(
+        execution_id=3,
+        results={
+            "a.x": result("a.x", TableStatus.FAILED, error_type="E", error_message="m"),
+            "b.y": result(
+                "b.y",
+                details={"inputs_not_refreshed": ["a.z"]},
+            ),
+        },
+    )
+    ctx = RunContext(tags=["daily", "crm"], exclude_tags=["slow<"])
+    text = acs_email.format_text(digest, ctx)
+    assert "Tags: daily, crm - excluding slow<" in text
+    html = acs_email.format_html(digest, ctx)
+    assert "Tags: daily, crm - excluding slow&lt;" in html
+
+
+def test_no_tags_line_without_a_tag_filter():
+    assert "Tags:" not in acs_email.format_text(failed_digest(), RunContext())

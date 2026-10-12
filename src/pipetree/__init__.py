@@ -131,6 +131,8 @@ def run_pipeline(
         config,
         platform or getattr(adapter, "platform", None),
         RunContext(
+            tags=tags,
+            exclude_tags=exclude_tags,
             select=select,
             with_dependents=with_dependents,
             with_ancestors=with_ancestors,

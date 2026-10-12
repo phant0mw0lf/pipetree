@@ -45,6 +45,7 @@ The body comes as plain text and as simple HTML with no external resources:
 Run 261010132021461 FAILED
 
 Tables: 1 failed, 2 upstream_failed, 2 succeeded
+Tags: daily
 Selection: customer (with dependents)
 job_run_url: https://adb-1.azuredatabricks.net/jobs/7/runs/9
 
@@ -57,12 +58,13 @@ FAILED TABLES
 NOTES
 * bronze.customer: 2 duplicate row(s) dropped
 * bronze.orders: schema: added: channel (string)
+* silver.report: input not refreshed: bronze.orders
 ```
 
 - Per failed table: the error type, the error message (cut at 500 characters) and the attempts.
 - `upstream_failed` tables are listed under the failed table that caused them.
 - The notes of all tables, also those that succeeded. See [Notes and run log](../../concepts/notes-and-run-log/).
-- The `--select` options of the run and the platform's run metadata (job and run link), when there are any.
+- The tags the run was limited to (`--tag`, `--exclude-tag`), the `--select` options of the run and the platform's run metadata (job and run link), when there are any.
 
 ## Set up without a secret
 

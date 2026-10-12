@@ -32,6 +32,8 @@ class RunContext:
     """What the digest does not carry: how the run was requested and where it ran."""
 
     select: list[str] | None = None
+    tags: list[str] | None = None
+    exclude_tags: list[str] | None = None
     with_dependents: bool = False
     with_ancestors: bool = False
     init: bool = False
@@ -97,6 +99,15 @@ def _counts(digest: RunDigest) -> str:
     return ", ".join(parts)
 
 
+def _tag_line(context: RunContext) -> str | None:
+    parts = []
+    if context.tags:
+        parts.append(", ".join(context.tags))
+    if context.exclude_tags:
+        parts.append(f"excluding {', '.join(context.exclude_tags)}")
+    return " - ".join(parts) or None
+
+
 def _selection(context: RunContext) -> str | None:
     flags = []
     if context.with_dependents:
@@ -132,6 +143,8 @@ def _all_notes(digest: RunDigest) -> list[tuple[str, list[str]]]:
 def format_text(digest: RunDigest, context: RunContext) -> str:
     grouped, ungrouped = _groups(digest)
     lines = [f"Run {digest.execution_id} FAILED", "", f"Tables: {_counts(digest)}"]
+    if tag_line := _tag_line(context):
+        lines.append(f"Tags: {tag_line}")
     if selection := _selection(context):
         lines.append(f"Selection: {selection}")
     lines += [f"{key}: {value}" for key, value in sorted(context.run_metadata.items())]
@@ -163,6 +176,8 @@ def format_html(digest: RunDigest, context: RunContext) -> str:
         f"<p>Tables: {esc(_counts(digest))}</p>",
     ]
     meta = []
+    if tag_line := _tag_line(context):
+        meta.append(f"Tags: {esc(tag_line)}")
     if selection := _selection(context):
         meta.append(f"Selection: {esc(selection)}")
     meta += [f"{esc(k)}: {esc(v)}" for k, v in sorted(context.run_metadata.items())]
