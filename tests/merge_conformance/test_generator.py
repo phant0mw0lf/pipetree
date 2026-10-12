@@ -51,12 +51,13 @@ def _check_valid(case: Case, strategy: str) -> None:
                 if isinstance(row[c], int):
                     assert row[c] != -1  # never the int unknown-member sentinel
             groups.setdefault(k, []).append(row)
-        # Equal sequence (or no sequence_by) for one key -> identical rows only.
+        # Equal sequence (or no sequence_by) for one key -> identical rows only, except
+        # that a delete row and a data row may tie (the delete wins).
         for grp in groups.values():
             for i, a in enumerate(grp):
                 for b in grp[i + 1 :]:
                     same_seq = all(a[c] == b[c] for c in t.sequence_by)
-                    assert not same_seq or a == b, (case.repr_line(), a, b)
+                    assert not same_seq or a == b or a["op"] != b["op"], (case.repr_line(), a, b)
     assert len(keys_seen) <= 8  # upserts draw from a key space of 3-8 keys
 
 
@@ -88,6 +89,7 @@ def test_coverage_names_are_the_documented_ones():
     assert set(COVERAGE_NAMES) == {
         "duplicate_rows",
         "duplicate_with_equal_sequence",
+        "delete_tie_with_data_row",
         "delete_row",
         "delete_for_absent_key",
         "resurrection",
@@ -125,6 +127,7 @@ def test_coverage_detects_each_property_on_hand_built_cases():
         [r(1, 1, seq=7)],
         [r(1, 1, seq=7)],
         [],
+        [r(4, 4, seq=1, op="D"), r(4, 4, "y", seq=1)],
     ]
     case = Case(
         seed=-1,

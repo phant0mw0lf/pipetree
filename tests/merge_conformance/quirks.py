@@ -20,7 +20,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from pipetree.testing.merge_model import (
-    AmbiguousDedupe,
     BatchStats,
     ModelTable,
     _apply_scd2_late,
@@ -29,6 +28,7 @@ from pipetree.testing.merge_model import (
     _is_delete,
     _key,
     _seq,
+    dedupe_winner,
     is_unknown_member,
 )
 
@@ -97,14 +97,7 @@ class QuirkModel:
                 groups.setdefault(_key(table, r), []).append(r)
             winners = {}
             for k, grp in groups.items():
-                if table.sequence_by:
-                    top = max(_seq(table, r) for r in grp)
-                    tied = [r for r in grp if _seq(table, r) == top]
-                else:
-                    tied = grp
-                if any(_differs(tied[0], r, list(table.columns)) for r in tied[1:]):
-                    raise AmbiguousDedupe(f"tied rows differ for key {k}")
-                winners[k] = tied[0]
+                winners[k] = dedupe_winner(table, k, grp)
             dups = len(rows) - len(winners)
             rows = list(winners.values())
 

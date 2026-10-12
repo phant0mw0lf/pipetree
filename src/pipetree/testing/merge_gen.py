@@ -29,6 +29,7 @@ STRATEGIES = ("replace", "append", "scd1", "scd2")
 COVERAGE_NAMES = (
     "duplicate_rows",
     "duplicate_with_equal_sequence",
+    "delete_tie_with_data_row",
     "delete_row",
     "delete_for_absent_key",
     "resurrection",
@@ -199,6 +200,9 @@ def generate_case(seed: int, strategy: str) -> Case:
     if rng.random() < 0.10:
         inits = frozenset({rng.randint(1, n_batches - 1)})
 
+    if has_delete and delete_mode != "ignore":
+        batches = _add_delete_ties(batches, table, random.Random(f"deltie:{strategy}:{seed}"))
+
     return Case(
         seed=seed,
         table=table,
@@ -239,6 +243,30 @@ def _resolve_ties(rows: list[dict], table: ModelTable) -> list[dict]:
     return out
 
 
+def _add_delete_ties(batches: list[list[dict]], table: ModelTable, rng: random.Random):
+    """A deterministic post-pass on its own random stream (the history of a seed
+    is otherwise unchanged): some batches get a delete row tied with a data row of
+    one key (equal ``sequence_by`` tuple; any two rows without ``sequence_by``).
+    The delete wins that tie; tied rows of one kind stay identical."""
+    out = []
+    for batch in batches:
+        batch = list(batch)
+        if rng.random() < _INJECT:
+            data = [r for r in batch if r["op"] != "D" and all(r[c] is not None for c in table.key)]
+            if data and len(batch) < 8:
+                src = rng.choice(data)
+                tie = (_key(table, src), tuple(src[c] for c in table.sequence_by))
+                has_delete = any(
+                    r["op"] == "D"
+                    and (_key(table, r), tuple(r[c] for c in table.sequence_by)) == tie
+                    for r in batch
+                )
+                if not has_delete:
+                    batch.insert(rng.randint(0, len(batch)), {**src, "op": "D"})
+        out.append(batch)
+    return out
+
+
 # --------------------------------------------------------------------- coverage
 
 
@@ -272,6 +300,8 @@ def coverage(case: Case) -> set[str]:
     - duplicate_rows: a batch has >= 2 rows of one fully non-NULL key.
     - duplicate_with_equal_sequence: such rows share their ``sequence_by`` tuple
       (``sequence_by`` set).
+    - delete_tie_with_data_row: such a tie (delete_mode not ignore) holds a delete row
+      and a data row; the delete wins.
     - delete_row: a batch has a delete row (``has_delete``, ``op == "D"``).
     - delete_for_absent_key: a delete row, the only row of its key in the batch,
       on a table whose ``delete_mode`` is not ignore, for a key with no row
@@ -320,6 +350,13 @@ def coverage(case: Case) -> set[str]:
                     seqs = [tuple(r[c] for c in t.sequence_by) for r in grp]
                     if len(set(seqs)) < len(seqs):
                         got.add("duplicate_with_equal_sequence")
+                if t.has_delete and t.delete_mode != "ignore":
+                    by_seq: dict[tuple, set[bool]] = {}
+                    for r in grp:
+                        tie = tuple(r[c] for c in t.sequence_by)
+                        by_seq.setdefault(tie, set()).add(r["op"] == "D")
+                    if any(len(kinds) == 2 for kinds in by_seq.values()):
+                        got.add("delete_tie_with_data_row")
 
         base = [] if init else state
         if init:
