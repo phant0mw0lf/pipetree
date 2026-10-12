@@ -11,7 +11,8 @@ one that diverges in an unexplained way (a hidden or new deviation) - fails, and
 the lists must be regenerated (see `known_divergences.py`).
 
 `PIPETREE_CONFORMANCE_SEEDS` (default 25) sets the number of seeds per
-strategy; 0 turns the generated cases off. The lists are generated for seeds
+strategy; 0 turns the generated cases off; `pr` runs the fixed, coverage-directed
+seeds of `pr_seeds.py` (what the pull-request CI uses). The lists are generated for seeds
 0-299: a diverging seed >= 300 fails as unattributed until the lists are
 regenerated with `--seeds N`. The slow tests carry the `conformance` marker
 (`-m "not conformance"` skips them).
@@ -33,6 +34,7 @@ from tests.merge_conformance.known_divergences import (
     deviation_of,
     deviations_for,
 )
+from tests.merge_conformance.pr_seeds import PR_SEEDS
 from tests.merge_conformance.quirks import QuirkModel, quirk_problems
 
 pytestmark = pytest.mark.spark
@@ -43,6 +45,8 @@ ATTRIBUTED_SEEDS = 300  # the seed range the generated lists cover
 
 def _seed_count() -> tuple[int, str | None]:
     raw = os.environ.get("PIPETREE_CONFORMANCE_SEEDS", "25")
+    if raw == "pr":
+        return -1, None  # the fixed lists of pr_seeds.py
     try:
         n = int(raw)
     except ValueError:
@@ -50,7 +54,8 @@ def _seed_count() -> tuple[int, str | None]:
     if n < 0:
         return (
             0,
-            f"PIPETREE_CONFORMANCE_SEEDS must be a non-negative integer (0 = off), got {raw!r}",
+            "PIPETREE_CONFORMANCE_SEEDS must be a non-negative integer (0 = off) or 'pr', "
+            f"got {raw!r}",
         )
     return n, None
 
@@ -84,7 +89,7 @@ def _check(spark, case: Case, deviations: list[str], *, note: str = "") -> None:
 
 def _params():
     for strategy in STRATEGIES:
-        for seed in range(SEEDS):
+        for seed in PR_SEEDS[strategy] if SEEDS < 0 else range(SEEDS):
             ids = deviations_for(strategy, seed)
             label = f"{strategy}-{seed}" + (f"-{'+'.join(ids)}" if ids else "")
             yield pytest.param(strategy, seed, id=label)
