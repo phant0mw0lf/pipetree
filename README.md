@@ -314,7 +314,9 @@ See the blog series for the full design rationale. In short:
   collected in memory and written once, at the end, to
   `_meta.pipeline_run_log` (a `replaceWhere` on `_execution_id`, so
   re-running the same execution id overwrites rather than duplicates); a
-  pluggable `Notifier` reports the digest (`ConsoleNotifier` by default).
+  pluggable `Notifier` reports the digest (`ConsoleNotifier` by default; a
+  `notifications.email` block in the YAML also mails a failed run through
+  Azure Communication Services, see the Notifications guide).
 - **Progress** (`pipetree.executor.events`, `pipetree.notebook`) - an
   optional `RunObserver` sees the run while it happens (per-table
   running/retrying/finished events); `LiveGraphView` and

@@ -25,6 +25,8 @@ A **note** records something a merge changed without failing. The table still su
 
 Each note is also a `WARNING` log line. In the graph the table gets an amber badge, its hover text lists the notes and the end-of-run digest gets a `notes` column. See the [example](../../getting-started/with-problems/).
 
+A failed run can also be mailed with all notes of every table. See [Notifications](../../guides/notifications/).
+
 ## Schema policy
 
 | `schema_policy` | On drift |

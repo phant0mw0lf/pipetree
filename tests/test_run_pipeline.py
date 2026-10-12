@@ -336,3 +336,227 @@ def test_the_partial_run_warning_also_covers_a_tag_run(tmp_path: Path, caplog):
         run_pipeline(config_path, adapter=FakeAdapter(), execution_id=1, tags=["daily"])
 
     assert any("without --with-dependents" in r.getMessage() for r in caplog.records)
+
+
+class RaisingNotifier:
+    def notify(self, digest: RunDigest) -> None:
+        raise RuntimeError("secret-body-and-credentials")
+
+
+def test_a_raising_notifier_never_alters_the_run(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    config_path = write_config(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        digest = run_pipeline(
+            config_path, adapter=FakeAdapter(), execution_id=1, notifier=RaisingNotifier()
+        )
+
+    assert digest.succeeded
+    assert digest.exit_code == 0
+    assert digest.results["bronze.customer"].status == TableStatus.SUCCEEDED
+    warnings = [r.getMessage() for r in caplog.records if "notif" in r.getMessage().lower()]
+    assert warnings and "RuntimeError" in warnings[0]
+    assert "secret-body-and-credentials" not in warnings[0]
+
+
+def test_a_raising_notifier_leaves_a_failed_digest_untouched(tmp_path: Path):
+    config_path = write_config(tmp_path)
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    digest = run_pipeline(
+        config_path,
+        adapter=FakeAdapter({"bronze.customer": boom}),
+        execution_id=1,
+        notifier=RaisingNotifier(),
+    )
+    assert digest.exit_code == 1
+    assert digest.results["bronze.customer"].status == TableStatus.FAILED
+
+
+EMAIL_CONFIG = (
+    MINIMAL_CONFIG
+    + """
+notifications:
+  email:
+    endpoint: https://acs.communication.azure.com
+    sender: DoNotReply@guid.azurecomm.net
+    to: [info@example.com]
+"""
+)
+
+
+def test_config_block_builds_a_composite_with_console_and_email(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    from pipetree.notify import acs_email
+
+    sent: list[dict] = []
+
+    class Poller:
+        def result(self, timeout=None):
+            return {}
+
+        def done(self):
+            return True
+
+    class Client:
+        def __init__(self, endpoint, credential):
+            self.endpoint = endpoint
+
+        def begin_send(self, message):
+            sent.append(message)
+            return Poller()
+
+    monkeypatch.setattr(acs_email, "_create_email_client", lambda e, c: Client(e, c))
+    monkeypatch.setattr(acs_email, "_sdk_available", lambda: True)
+    monkeypatch.setattr("pipetree.notify.credential._default_credential", lambda: object())
+    config_path = write_config(tmp_path, EMAIL_CONFIG)
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    digest = run_pipeline(
+        config_path, adapter=FakeAdapter({"bronze.customer": boom}), execution_id=5
+    )
+
+    assert digest.exit_code == 1
+    assert "Run 5: FAILED" in capsys.readouterr().out  # console print stays
+    assert len(sent) == 1
+    assert "FAILED run 5" in sent[0]["content"]["subject"]
+
+
+def test_explicit_notifier_wins_over_the_config_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from pipetree.notify import acs_email
+
+    monkeypatch.setattr(
+        acs_email,
+        "_create_email_client",
+        lambda e, c: pytest.fail("email must not be built when notifier= is given"),
+    )
+    config_path = write_config(tmp_path, EMAIL_CONFIG)
+    notifier = RecordingNotifier()
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    digest = run_pipeline(
+        config_path,
+        adapter=FakeAdapter({"bronze.customer": boom}),
+        execution_id=1,
+        notifier=notifier,
+    )
+    assert notifier.notified == [digest]
+
+
+def test_successful_run_never_builds_the_email_notifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    from pipetree.notify import acs_email
+
+    built: list[int] = []
+
+    def forbidden(*args, **kwargs):
+        built.append(1)
+        raise AssertionError("must not be called")
+
+    secret_config = EMAIL_CONFIG.replace(
+        "endpoint: https://acs.communication.azure.com", "endpoint: {secret: acs-endpoint}"
+    )
+    monkeypatch.setattr(acs_email, "_sdk_available", lambda: False)  # would raise if checked
+    monkeypatch.setattr(acs_email, "_create_email_client", forbidden)
+    monkeypatch.setattr("pipetree.notify.build.credential_for", forbidden)
+    monkeypatch.setattr("pipetree.platform.local.LocalPlatform.resolve_secret", forbidden)
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        digest = run_pipeline(write_config(tmp_path, secret_config), adapter=FakeAdapter())
+
+    assert digest.succeeded
+    assert built == []
+    assert not any("notification" in r.getMessage() for r in caplog.records)
+
+
+def test_failed_run_builds_the_email_notifier_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from pipetree.notify import acs_email
+
+    created: list[int] = []
+
+    def create(endpoint, credential):
+        created.append(1)
+        return type("C", (), {"begin_send": _send})()
+
+    monkeypatch.setattr(acs_email, "_sdk_available", lambda: True)
+    monkeypatch.setattr(acs_email, "_create_email_client", create)
+    monkeypatch.setattr("pipetree.notify.build.credential_for", lambda p: object())
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    run_pipeline(
+        write_config(tmp_path, EMAIL_CONFIG), adapter=FakeAdapter({"bronze.customer": boom})
+    )
+    assert created == [1]
+
+
+def test_a_broken_email_config_does_not_fail_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    from pipetree.notify import acs_email
+
+    monkeypatch.setattr(acs_email, "_sdk_available", lambda: False)
+    config_path = write_config(tmp_path, EMAIL_CONFIG)
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    with caplog.at_level(logging.WARNING, logger="pipetree"):
+        digest = run_pipeline(
+            config_path, adapter=FakeAdapter({"bronze.customer": boom}), execution_id=1
+        )
+    assert digest.exit_code == 1
+    assert any("ValueError" in r.getMessage() for r in caplog.records)
+
+
+def _send(self, message):
+    class Poller:
+        def result(self, timeout=None):
+            return {}
+
+        def done(self):
+            return True
+
+    return Poller()
+
+
+def test_config_built_notifier_uses_the_platform_of_the_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from pipetree.notify import acs_email
+    from pipetree.platform.local import LocalPlatform
+
+    seen: list[object] = []
+    monkeypatch.setattr(acs_email, "_sdk_available", lambda: True)
+    monkeypatch.setattr(
+        "pipetree.notify.build.credential_for", lambda platform: seen.append(platform) or object()
+    )
+
+    class PlatformAdapter(FakeAdapter):
+        platform = LocalPlatform()
+
+    monkeypatch.setattr(
+        acs_email, "_create_email_client", lambda e, c: type("C", (), {"begin_send": _send})()
+    )
+
+    def boom() -> None:
+        raise ValueError("bad")
+
+    adapter = PlatformAdapter({"bronze.customer": boom})
+    path = write_config(tmp_path, EMAIL_CONFIG)
+    run_pipeline(path, adapter=adapter, execution_id=1)
+    assert seen == [adapter.platform]
+
+    seen.clear()
+    explicit = LocalPlatform()
+    run_pipeline(path, adapter=adapter, execution_id=1, platform=explicit)
+    assert seen == [explicit]

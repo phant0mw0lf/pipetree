@@ -13,10 +13,12 @@
 
 # Parameters: the job's notebook_task `base_parameters` (databricks.yml) fill
 # these widgets. The vault parameters are optional: leave them empty for a
-# pipeline without `{secret: ...}` values.
+# pipeline without `{secret: ...}` values. `acs_credential` is the Unity Catalog
+# service credential that sends the failure email (`notifications.email`).
 dbutils.widgets.text("catalog", "main")  # noqa: F821 - notebook global
 dbutils.widgets.text("key_vault_url", "")  # noqa: F821
 dbutils.widgets.text("key_vault_credential", "")  # noqa: F821
+dbutils.widgets.text("acs_credential", "")  # noqa: F821
 dbutils.widgets.text("tags", "")  # noqa: F821
 dbutils.widgets.text("config_path", "")  # noqa: F821
 
@@ -30,11 +32,13 @@ from pipetree.config.loader import load_config
 from pipetree.graph.select import split_names
 from pipetree.model import PipelineConfig
 from pipetree.notebook import LiveGraphView
+from pipetree.notify.credential import ACS_RESOURCE
 from pipetree.platform.databricks import DatabricksPlatform
 
 catalog = dbutils.widgets.get("catalog")  # noqa: F821
 key_vault_url = dbutils.widgets.get("key_vault_url") or None  # noqa: F821
 key_vault_credential = dbutils.widgets.get("key_vault_credential") or None  # noqa: F821
+acs_credential = dbutils.widgets.get("acs_credential") or None  # noqa: F821
 tags = split_names(dbutils.widgets.get("tags"))  # noqa: F821 - comma separated, empty = every table
 config_path = Path(dbutils.widgets.get("config_path"))  # noqa: F821
 
@@ -51,6 +55,8 @@ platform = DatabricksPlatform(
     catalog=catalog,
     key_vault_url=key_vault_url,
     key_vault_credential=key_vault_credential,
+    # The audience of Azure Communication Services, for `notifications.email`.
+    service_credentials={ACS_RESOURCE: acs_credential} if acs_credential else None,
 )
 adapter = SparkAdapter(
     spark,  # noqa: F821

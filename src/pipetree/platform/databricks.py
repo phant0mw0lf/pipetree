@@ -121,6 +121,10 @@ class DatabricksPlatform:
     def run_metadata(self) -> dict[str, str]:
         return dict(self._run_metadata)
 
+    def can_acquire_token(self, resource: str) -> bool:
+        """Whether `service_credentials` has an entry for `resource`."""
+        return resource in self._service_credentials
+
     def acquire_token(self, resource: str) -> str:
         try:
             credential_name = self._service_credentials[resource]

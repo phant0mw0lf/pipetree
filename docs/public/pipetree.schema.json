@@ -1,11 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "pipetree pipeline",
-  "description": "A pipetree pipeline config. Every top-level key except `defaults` and `systems` is a layer.",
+  "description": "A pipetree pipeline config. Every top-level key except `defaults`, `systems` and `notifications` is a layer.",
   "type": "object",
   "properties": {
     "defaults": {
       "$ref": "#/$defs/Defaults"
+    },
+    "notifications": {
+      "$ref": "#/$defs/Notifications"
     },
     "systems": {
       "type": "object",
@@ -49,6 +52,51 @@
         }
       },
       "title": "Defaults",
+      "type": "object"
+    },
+    "EmailNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/SecretRef"
+            }
+          ],
+          "description": "Endpoint of the Azure Communication Services resource, `https://<resource>.communication.azure.com`. A literal or `{secret: name}`.",
+          "title": "Endpoint"
+        },
+        "sender": {
+          "description": "Sender address of a domain connected to the resource, for example `DoNotReply@<guid>.azurecomm.net`.",
+          "title": "Sender",
+          "type": "string"
+        },
+        "to": {
+          "description": "Recipient addresses. At least one.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "To",
+          "type": "array"
+        },
+        "on": {
+          "const": "failure",
+          "default": "failure",
+          "description": "When to send. `failure` mails a run in which a table failed or was marked upstream_failed. No mail for a successful run.",
+          "title": "On",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "sender",
+        "to"
+      ],
+      "title": "EmailNotification",
       "type": "object"
     },
     "Layer": {
@@ -112,6 +160,40 @@
         }
       },
       "title": "Merge",
+      "type": "object"
+    },
+    "Notifications": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmailNotification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Email a failed run through Azure Communication Services, authenticated with a token credential (no connection string)."
+        }
+      },
+      "title": "Notifications",
+      "type": "object"
+    },
+    "SecretRef": {
+      "description": "A `{secret: name}` reference, resolved later through the Platform seam.",
+      "properties": {
+        "secret": {
+          "description": "Name of the secret, resolved by the platform at run time.",
+          "title": "Secret",
+          "type": "string"
+        }
+      },
+      "required": [
+        "secret"
+      ],
+      "title": "SecretRef",
       "type": "object"
     },
     "Source": {

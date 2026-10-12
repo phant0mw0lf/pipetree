@@ -23,7 +23,15 @@ from pydantic.json_schema import models_json_schema
 
 from pipetree import __version__
 from pipetree.cli import main
-from pipetree.model import Defaults, Merge, Source, System, Table
+from pipetree.model import (
+    Defaults,
+    EmailNotification,
+    Merge,
+    Notifications,
+    Source,
+    System,
+    Table,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs" / "src" / "content" / "docs"
@@ -43,7 +51,10 @@ _DERIVED_TABLE_FIELDS = ("name", "layer", "fqn")
 def build_schema() -> dict[str, Any]:
     """The schema of the YAML file: defaults, systems, and any number of layers."""
     _, defs_schema = models_json_schema(
-        [(m, "validation") for m in (Defaults, System, Source, Merge, Table)],
+        [
+            (m, "validation")
+            for m in (Defaults, System, Source, Merge, Table, Notifications, EmailNotification)
+        ],
         ref_template="#/$defs/{model}",
     )
     defs: dict[str, Any] = defs_schema["$defs"]
@@ -80,11 +91,12 @@ def build_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "pipetree pipeline",
-        "description": "A pipetree pipeline config. Every top-level key except `defaults` "
-        "and `systems` is a layer.",
+        "description": "A pipetree pipeline config. Every top-level key except `defaults`, "
+        "`systems` and `notifications` is a layer.",
         "type": "object",
         "properties": {
             "defaults": {"$ref": "#/$defs/Defaults"},
+            "notifications": {"$ref": "#/$defs/Notifications"},
             "systems": {
                 "type": "object",
                 "description": "Systems by name. Tables reference them in `source.system`.",
@@ -197,6 +209,7 @@ def render_yaml(schema: dict[str, Any]) -> str:
         "| --- | --- | --- |",
         "| `defaults` | Defaults | Optional. Values for every table. |",
         "| `systems` | map[string, System] | Declared systems. |",
+        "| `notifications` | Notifications | Optional. Who is told about a failed run. |",
         "| any other key | Layer | A layer with a `tables` map of name to Table. "
         "The layer name is the default schema of its tables. |",
         "",
@@ -208,6 +221,12 @@ def render_yaml(schema: dict[str, Any]) -> str:
             extra_system,
         ),
         section("Table", "Table", "Under `<layer>.tables.<name>`."),
+        section(
+            "Notifications",
+            "Notifications",
+            "Under `notifications`. See [Notifications](../../guides/notifications/).",
+        ),
+        section("Email", "EmailNotification", "Under `notifications.email`."),
         section("Source", "Source", "Under a table's `source`."),
         section(
             "Merge",

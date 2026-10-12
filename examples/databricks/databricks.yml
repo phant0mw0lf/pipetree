@@ -44,6 +44,12 @@ variables:
       Connector for Azure Databricks) that reads the vault. Empty with an
       empty key_vault_url.
     default: ""
+  acs_credential:
+    description: >
+      Name of the Unity Catalog service credential used to send the failure
+      email (`notifications.email`) through Azure Communication Services.
+      Empty for a pipeline without notifications.
+    default: ""
 
 artifacts:
   pipetree:
@@ -79,6 +85,7 @@ resources:
               catalog: ${var.catalog}
               key_vault_url: ${var.key_vault_url}
               key_vault_credential: ${var.key_vault_credential}
+              acs_credential: ${var.acs_credential}
               tags: ${var.tags}
               config_path: ${workspace.file_path}/pipeline.yaml
           libraries:

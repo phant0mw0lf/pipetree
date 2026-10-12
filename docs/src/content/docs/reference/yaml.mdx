@@ -15,6 +15,7 @@ Generated from `src/pipetree/model.py`. For editor completion, use the [JSON Sch
 | --- | --- | --- |
 | `defaults` | Defaults | Optional. Values for every table. |
 | `systems` | map[string, System] | Declared systems. |
+| `notifications` | Notifications | Optional. Who is told about a failed run. |
 | any other key | Layer | A layer with a `tables` map of name to Table. The layer name is the default schema of its tables. |
 
 ## Defaults
@@ -52,6 +53,25 @@ Under `<layer>.tables.<name>`.
 | `schema_policy` | "evolve" \| "fail" \| "ignore" | - | Schema drift policy for this table. Defaults to `defaults.schema_policy`. |
 | `surrogate_key` | string \| null | `null` | Name of a generated integer key column (scd1 and scd2 only). The unknown member gets -1. |
 | `tags` | list[string] | `[]` | Labels for selecting tables with `pipetree run --tag`. Lowercase letters, digits, `-` and `_`, starting with a letter or digit, at most 40 characters, no duplicates within a table. |
+
+## Notifications
+
+Under `notifications`. See [Notifications](../../guides/notifications/).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `email` | EmailNotification \| null | `null` | Email a failed run through Azure Communication Services, authenticated with a token credential (no connection string). |
+
+## Email
+
+Under `notifications.email`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoint` | string \| SecretRef | required | Endpoint of the Azure Communication Services resource, `https://<resource>.communication.azure.com`. A literal or `{secret: name}`. |
+| `sender` | string | required | Sender address of a domain connected to the resource, for example `DoNotReply@<guid>.azurecomm.net`. |
+| `to` | list[string] | required | Recipient addresses. At least one. |
+| `on` | "failure" | `"failure"` | When to send. `failure` mails a run in which a table failed or was marked upstream_failed. No mail for a successful run. |
 
 ## Source
 

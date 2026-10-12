@@ -62,6 +62,10 @@ class SparkAdapter:
         self._platform = platform or LocalPlatform()
         self._read_source_override = read_source
 
+    @property
+    def platform(self) -> Platform:
+        return self._platform
+
     def run_table(
         self, table: Table, *, execution_id: int, init: bool = False
     ) -> dict[str, Any] | None:
