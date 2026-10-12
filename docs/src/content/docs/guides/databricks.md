@@ -23,9 +23,7 @@ platform = DatabricksPlatform(
 adapter = SparkAdapter(
     spark, systems=config.systems, base_dir=config_path.parent, platform=platform
 )
-digest = run_pipeline(
-    config_path, adapter=adapter, observer=LiveGraphView(), tags=tags or None
-)
+digest = run_pipeline(config_path, adapter=adapter, observer=LiveGraphView(), tags=tags or None)
 ```
 
 The job parameters are `catalog`, `key_vault_url`, `key_vault_credential`, `tags` and the optional `acs_credential`. The vault parameters are empty for a pipeline without secrets. `tags` (comma separated) limits the run to the tables with one of those tags. `acs_credential` names the service credential that sends the [failure email](../notifications/). A failed table fails the task. The bundle uses the `databricks` CLI's default auth profile. See the folder's README for the input files and the cluster settings.
