@@ -291,6 +291,45 @@ def test_scd1_deduplicates_the_source_batch_and_reports_it(spark):
     assert rows(spark.table(table.fqn))[1]["name"] == "Alice v2"
 
 
+_NAN = float("nan")
+
+
+def _seq_run(spark, table, data, execution_id):
+    df = spark.createDataFrame(data, "id int, name string, seq double")
+    return _MERGE[table.strategy](spark, table, df, execution_id, "crm")
+
+
+def test_scd1_nan_sequence_is_newer_than_any_number(spark):
+    table = make_table("nan_scd1", "scd1", merge={"sequence_by": ["seq"]})
+    _seq_run(spark, table, [(1, "nan", _NAN)], 1)
+
+    _seq_run(spark, table, [(1, "older", 2.0)], 2)  # older than NaN: ignored
+    assert rows(spark.table(table.fqn))[1]["name"] == "nan"
+
+    _seq_run(spark, table, [(1, "equal", _NAN)], 3)  # NaN equals NaN: not older, wins
+    assert rows(spark.table(table.fqn))[1]["name"] == "equal"
+
+
+def test_scd1_nan_sequence_wins_the_dedupe_in_a_batch(spark):
+    table = make_table("nan_dedupe", "scd1", merge={"sequence_by": ["seq"]})
+
+    _seq_run(spark, table, [(1, "one", 1.0), (1, "nan", _NAN), (1, "two", 2.0)], 1)
+
+    assert rows(spark.table(table.fqn))[1]["name"] == "nan"
+
+
+def test_scd2_late_row_after_a_nan_version_is_placed_before_it(spark):
+    table = make_table("nan_scd2", "scd2", merge={"sequence_by": ["seq"]})
+    _seq_run(spark, table, [(1, "one", 1.0)], 1)
+    _seq_run(spark, table, [(1, "nan", _NAN)], 2)
+
+    _seq_run(spark, table, [(1, "two", 2.0)], 3)
+
+    versions = spark.table(table.fqn).collect()
+    assert sorted(r["name"] for r in versions) == ["nan", "one", "two"]
+    assert [r["name"] for r in versions if r["_is_current"]] == ["nan"]
+
+
 # ------------------------------------------------------------------ scd2
 
 
@@ -884,6 +923,41 @@ def test_ignore_a_null_delete_when_result_keeps_the_row(spark, strategy):
     assert [(r[0], r[1]) for r in _snapshot(spark, table)] == [(1, "a"), (2, "b")]
 
 
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_a_null_delete_when_result_is_not_a_delete_on_the_first_load(spark, strategy, mode):
+    if strategy == "scd2" and mode == "hard":
+        pytest.skip("scd2 has no hard delete")
+    table = _del_table(f"null_first_{mode}", strategy, mode)
+
+    _del_run(spark, table, [(1, "a", None, 1), (2, "b", False, 1)], 1)
+
+    assert [(r[0], r[1], r[2]) for r in _snapshot(spark, table)] == [
+        (1, "a", False),
+        (2, "b", False),
+    ]
+
+
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_a_null_delete_when_result_inserts_and_updates_on_a_merge(spark, strategy, mode):
+    if strategy == "scd2" and mode == "hard":
+        pytest.skip("scd2 has no hard delete")
+    table = _del_table(f"null_merge_{mode}", strategy, mode)
+    _del_run(spark, table, [(1, "a", False, 1), (2, "b", False, 1)], 1)
+
+    # key 3 is new, key 2 changes: both rows have a NULL flag (key 1 is re-sent unchanged so
+    # that Spark can infer the flag column's type)
+    _del_run(spark, table, [(3, "c", None, 2), (2, "B", None, 2), (1, "a", False, 2)], 2)
+
+    current = [r for r in _snapshot(spark, table) if strategy == "scd1" or r[4]]
+    assert [(r[0], r[1], r[2]) for r in current] == [
+        (1, "a", False),
+        (2, "B", False),
+        (3, "c", False),
+    ]
+
+
 @pytest.mark.parametrize("strategy", ["scd1", "scd2"])
 def test_soft_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
     table = _del_table("soft_seq", strategy, "soft")
@@ -895,19 +969,19 @@ def test_soft_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
     assert [r[2] for r in _snapshot(spark, table)] == [True]
 
 
-@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
-def test_hard_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
-    table = _del_table("hard_seq", strategy, "hard")
+def test_hard_delete_row_with_the_higher_sequence_still_wins(spark):
+    table = _del_table("hard_seq", "scd1", "hard")
     _del_run(spark, table, [(1, "a", False, 1)], 1)
 
     result = _del_run(spark, table, [(1, "a", False, 2), (1, "a", True, 5)], 2)
 
     assert result["duplicates_dropped"] == 1
-    if strategy == "scd1":
-        assert _snapshot(spark, table) == []
-    else:
-        # scd2 hard delete: the history is kept, closed
-        assert [(r[0], r[4]) for r in _snapshot(spark, table)] == [(1, False)]
+    assert _snapshot(spark, table) == []
+
+
+def test_scd2_with_hard_delete_is_rejected():
+    with pytest.raises(ValueError, match="scd2 cannot be combined with delete_mode: hard"):
+        _del_table("hard_seq", "scd2", "hard")
 
 
 # ------------------------------------------------- ignore_columns (ignore_columns alone update in

@@ -10,12 +10,15 @@ The generator honours the model's contract (see ``merge_model``): rows of one
 key with an equal ``sequence_by`` tuple (or any two rows of one key without
 ``sequence_by``) are identical, no source key equals an unknown-member
 sentinel (no int key is ever ``-1``), scd2 never uses ``delete_mode: hard``,
-``op`` is ``"D"`` for a delete row and ``"U"`` otherwise.
+``op`` is ``"D"`` for a delete row; any other row has ``"U"``, or, on a table with a delete
+flag, ``None`` for a deterministic share of them (the delete expression is then NULL: not a
+delete).
 """
 
 from __future__ import annotations
 
 import random
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -187,7 +190,10 @@ def generate_case(seed: int, strategy: str) -> Case:
             again["seen"] = (again["seen"] + 1) % 4
             rows.append(again)
         rng.shuffle(rows)
-        batches.append(_resolve_ties(rows[:8], table))
+        batch = _resolve_ties(rows[:8], table)
+        if has_delete:
+            _null_some_flags(batch, table, seed)
+        batches.append(batch)
 
     inits: frozenset[int] = frozenset()
     if rng.random() < 0.10:
@@ -201,6 +207,20 @@ def generate_case(seed: int, strategy: str) -> Case:
         batches=batches,
         inits=inits,
     )
+
+
+def _null_some_flags(rows: list[dict], table: ModelTable, seed: int) -> None:
+    """Turn ``op`` into NULL (a NULL delete expression) for about one update row in seven.
+
+    The choice depends only on (seed, key, sequence tuple), so rows that tie are still
+    identical, and it draws nothing from the history's random stream: the histories of
+    every seed stay what they were apart from these values."""
+    for r in rows:
+        if r["op"] != "U":
+            continue
+        tie = (tuple(r[c] for c in table.key), tuple(r[c] for c in table.sequence_by))
+        if zlib.crc32(f"{seed}:{tie}".encode()) % 7 == 0:
+            r["op"] = None
 
 
 def _resolve_ties(rows: list[dict], table: ModelTable) -> list[dict]:

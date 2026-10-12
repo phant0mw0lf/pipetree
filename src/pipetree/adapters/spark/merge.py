@@ -417,9 +417,7 @@ def _plan_late_versions(
         history.setdefault(tuple(d[k] for k in keys), []).append(d)
 
     def seq_of(row: dict) -> tuple:
-        return tuple(
-            (row.get(c) is not None, 0 if row.get(c) is None else row[c]) for c in seq_cols
-        )
+        return tuple(_sequence_key(row.get(c)) for c in seq_cols)
 
     compare = _comparable_columns(columns, table, target_columns)
     inserts: list[tuple[dict[str, Any], int]] = []
@@ -766,7 +764,9 @@ def _without_ignored_deletes(df: DataFrame, table: Table) -> DataFrame:
 def _prepare_source(df: DataFrame, table: Table) -> DataFrame:
     if table.merge.delete_mode == "ignore" or not table.merge.delete_when:
         return df.withColumn(_IS_DELETE_COL, F.lit(False))
-    return df.withColumn(_IS_DELETE_COL, F.expr(table.merge.delete_when))
+    # A NULL result is not a delete (merge-options docs): without the coalesce the flag is
+    # neither true nor false and no merge clause matches, so the row would be lost.
+    return df.withColumn(_IS_DELETE_COL, F.coalesce(F.expr(table.merge.delete_when), F.lit(False)))
 
 
 def _key_condition(table: Table) -> str:
@@ -821,6 +821,17 @@ def _ignored_change_update(
     ]
     set_values: dict[str, str | Column] = {c: f"source.{c}" for c in written}
     return condition, set_values
+
+
+def _sequence_key(value: Any) -> tuple[int, Any]:
+    """Sort key for one `sequence_by` value in Spark's total order: NULL lowest, NaN
+    highest (and equal to NaN), otherwise the natural order. Python comparisons with
+    NaN are always False, so a raw value cannot be compared."""
+    if value is None:
+        return (0, 0)
+    if value != value:  # NaN
+        return (2, 0)
+    return (1, value)
 
 
 def _not_older_sql(table: Table, existing_columns: frozenset[str] | None = None) -> str:
