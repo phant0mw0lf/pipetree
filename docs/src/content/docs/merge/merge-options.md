@@ -30,7 +30,7 @@ gold:
 
 | Option | Values | Meaning |
 | --- | --- | --- |
-| `sequence_by` | list of columns | Orders the versions of a key. Highest wins, NULL is lowest and NaN is highest. Used within a batch and across batches. |
+| `sequence_by` | list of columns | Orders the versions of a key. Highest wins, NULL is lowest and NaN is highest. Used within a batch and across batches. In a tie within a batch (or without `sequence_by`), a delete row wins over a data row; any other tie between rows that differ is undefined. |
 | `delete_when` | Spark SQL expression | True for a delete row. A NULL result is not a delete. |
 | `delete_mode` | `soft` (default), `hard`, `ignore` | `soft`: keep the row, mark `_is_deleted`. `hard`: remove the row (scd1 only). `ignore`: delete rows are dropped from the batch before the dedupe. |
 | `ignore_columns` | list of columns | Changes in only these columns update in place: no scd2 version, no `_execution_id` bump. |

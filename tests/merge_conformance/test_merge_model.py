@@ -129,6 +129,48 @@ def test_ambiguous_ties_raise():
         run(T("scd2"), B({"id": 1, "v": "a"}, {"id": 1, "v": "b"}))
 
 
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+@pytest.mark.parametrize("delete_first", [True, False])
+def test_a_delete_wins_a_tie_with_a_data_row(mode, delete_first):
+    t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode=mode)
+    rows = [{"id": 1, "v": "a", "seq": 2, "op": "D"}, {"id": 1, "v": "b", "seq": 2}]
+    if not delete_first:
+        rows.reverse()
+    state, stats = run(t, B({"id": 1, "v": "x", "seq": 1}), B(*rows))
+    assert stats.duplicates_dropped == 1
+    if mode == "hard":
+        assert state == []
+    else:
+        assert [r["_is_deleted"] for r in state] == [True]
+    # without sequence_by every row of a key ties
+    t = T("scd1", has_delete=True, delete_mode=mode)
+    state, stats = run(t, B({"id": 1, "v": "x"}), B(*rows))
+    assert stats.duplicates_dropped == 1
+    assert [r["_is_deleted"] for r in state] in ([], [True])
+
+
+def test_a_delete_does_not_win_a_higher_sequence_and_ignore_drops_it_first():
+    t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode="soft")
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 2, "op": "D"}, {"id": 1, "v": "b", "seq": 3}))
+    assert [r["v"] for r in state] == ["b"]
+    t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode="ignore")
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 2, "op": "D"}, {"id": 1, "v": "b", "seq": 2}))
+    assert [r["v"] for r in state] == ["b"]
+
+
+def test_differing_delete_rows_of_a_tie_still_raise():
+    t = T("scd1", sequence_by=("seq",), has_delete=True, delete_mode="soft")
+    with pytest.raises(AmbiguousDedupe):
+        run(
+            t,
+            B(
+                {"id": 1, "v": "a", "seq": 2, "op": "D"},
+                {"id": 1, "v": "b", "seq": 2, "op": "D"},
+                {"id": 1, "v": "c", "seq": 2},
+            ),
+        )
+
+
 def test_multi_column_sequence_by():
     t = T("scd1", sequence_by=("seq", "w"))
     state, _ = run(

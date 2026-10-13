@@ -111,6 +111,25 @@ def _seq(table: ModelTable, row: dict) -> tuple:
     return tuple(key(row[c]) for c in table.sequence_by)
 
 
+def dedupe_winner(table: ModelTable, k: tuple, grp: list[dict]) -> dict:
+    """The row of one key that survives the batch dedupe: the greatest ``sequence_by``
+    tuple (every row ties without ``sequence_by``). When that tie holds a delete row
+    and a data row, the delete wins (``delete_mode`` soft or hard). Any other tie
+    between rows that differ is undefined and raises."""
+    if table.sequence_by:
+        top = max(_seq(table, r) for r in grp)
+        tied = [r for r in grp if _seq(table, r) == top]
+    else:
+        tied = grp
+    if table.has_delete and table.delete_mode != "ignore":
+        deletes = [r for r in tied if _is_delete(table, r)]
+        if deletes:
+            tied = deletes
+    if any(_differs(tied[0], r, list(table.columns)) for r in tied[1:]):
+        raise AmbiguousDedupe(f"tied rows differ for key {k}")
+    return tied[0]
+
+
 def _differs(a: dict, b: dict, cols: list[str]) -> bool:
     return any(a[c] != b[c] for c in cols)
 
@@ -164,14 +183,7 @@ def apply_batch(
             groups.setdefault(_key(table, r), []).append(r)
         winners: dict[tuple, dict] = {}
         for k, grp in groups.items():
-            if table.sequence_by:
-                top = max(_seq(table, r) for r in grp)
-                tied = [r for r in grp if _seq(table, r) == top]
-            else:
-                tied = grp
-            if any(_differs(tied[0], r, list(table.columns)) for r in tied[1:]):
-                raise AmbiguousDedupe(f"tied rows differ for key {k}")
-            winners[k] = tied[0]
+            winners[k] = dedupe_winner(table, k, grp)
         dups = len(rows) - len(winners)
         rows = list(winners.values())
 

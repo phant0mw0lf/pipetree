@@ -4,7 +4,8 @@ on multi-matches otherwise). This is not a failure: duplicates are dropped
 and logged here as a warning (the count also lands in the run's details as
 `duplicates_dropped`), and the run keeps going. Without `sequence_by` the
 winner is deterministic for a given input but arbitrary, which the warning
-says."""
+says. A delete row (per `delete_when`, delete_mode soft or hard) wins a tie
+with a data row, whatever the order of the rows."""
 
 from __future__ import annotations
 
@@ -24,12 +25,15 @@ def dedupe_for_merge(df: DataFrame, table: Table) -> tuple[DataFrame, int]:
 
     total_before = df.count()
 
-    if table.merge.sequence_by:
-        order_cols = [F.col(c).desc_nulls_last() for c in table.merge.sequence_by]
-    else:
+    order_cols = [F.col(c).desc_nulls_last() for c in table.merge.sequence_by]
+    if table.merge.delete_when and table.merge.delete_mode != "ignore":
+        # A tie of a delete row and a data row: the delete wins (sorts first). A NULL
+        # `delete_when` result is not a delete.
+        order_cols.append(F.coalesce(F.expr(table.merge.delete_when), F.lit(False)).desc())
+    if not table.merge.sequence_by:
         # No tie-breaker declared: still pick exactly one row per key,
         # deterministic for a given input but not meaningful.
-        order_cols = [F.monotonically_increasing_id().desc()]
+        order_cols.append(F.monotonically_increasing_id().desc())
 
     window = Window.partitionBy(*table.business_key).orderBy(*order_cols)
     rank_col = "__pipetree_dedupe_rank__"

@@ -1390,3 +1390,74 @@ def test_scd2_late_row_equal_to_the_version_valid_at_its_sequence_is_a_no_op_und
     _clocked_scd2_run(spark, monkeypatch, table, [(1, "b", 3)], 4, 4000)
 
     assert _history(spark, table) == [("a", 1, False), ("b", 3, False), ("c", 5, True)]
+
+
+# ------------------------------------- a delete wins a sequence tie in one batch
+
+_TIE_COLS = ["id", "name", "version", "gone"]
+
+
+def _tie_table(name: str, strategy: str, mode: str, sequence_by: bool) -> Table:
+    merge: dict[str, Any] = {"delete_when": "gone = true", "delete_mode": mode}
+    if sequence_by:
+        merge["sequence_by"] = ["version"]
+    return make_table(name, strategy, merge=merge)
+
+
+def _tie_run(spark, table, data, execution_id):
+    fn = merge_scd1 if table.strategy == "scd1" else merge_scd2
+    return fn(spark, table, spark.createDataFrame(data, _TIE_COLS), execution_id, "crm")
+
+
+_TIE_ROWS = [(1, "bye", 2, True), (1, "keep", 2, False)]
+
+
+@pytest.mark.parametrize("sequence_by", [True, False])
+@pytest.mark.parametrize("delete_first", [True, False])
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_soft_delete_wins_a_tie_with_a_data_row_on_merge(
+    spark, strategy, delete_first, sequence_by
+):
+    table = _tie_table(f"tie_soft_{delete_first}_{sequence_by}", strategy, "soft", sequence_by)
+    _tie_run(spark, table, [(1, "old", 1, False)], 1)
+    data = _TIE_ROWS if delete_first else _TIE_ROWS[::-1]
+
+    result = _tie_run(spark, table, data, 2)
+
+    written = spark.table(table.fqn).collect()
+    assert [r["_is_deleted"] for r in written] == [True]
+    assert [r["name"] for r in written] == ["old"]
+    assert result["duplicates_dropped"] == 1
+
+
+@pytest.mark.parametrize("delete_first", [True, False])
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_soft_delete_wins_a_tie_with_a_data_row_on_first_load(spark, strategy, delete_first):
+    table = _tie_table(f"tie_first_{delete_first}", strategy, "soft", True)
+    data = _TIE_ROWS if delete_first else _TIE_ROWS[::-1]
+
+    _tie_run(spark, table, data + [(2, "other", 1, False)], 1)
+
+    assert set(rows(spark.table(table.fqn))) == {2}
+
+
+@pytest.mark.parametrize("delete_first", [True, False])
+def test_hard_delete_wins_a_tie_with_a_data_row(spark, delete_first):
+    table = _tie_table(f"tie_hard_{delete_first}", "scd1", "hard", True)
+    _tie_run(spark, table, [(1, "old", 1, False)], 1)
+    data = _TIE_ROWS if delete_first else _TIE_ROWS[::-1]
+
+    _tie_run(spark, table, data, 2)
+
+    assert 1 not in rows(spark.table(table.fqn))
+
+
+def test_a_data_row_with_a_higher_sequence_still_beats_a_delete(spark):
+    table = _tie_table("tie_higher", "scd1", "soft", True)
+    _tie_run(spark, table, [(1, "old", 1, False)], 1)
+
+    _tie_run(spark, table, [(1, "bye", 2, True), (1, "new", 3, False)], 2)
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["name"] == "new"
+    assert written["_is_deleted"] is False
