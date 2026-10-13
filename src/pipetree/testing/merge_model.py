@@ -5,8 +5,8 @@ not import pyspark. State rows are dicts of the table columns plus the audit
 columns ``_is_deleted``, ``_execution_id`` and (scd2 only) ``_is_current``.
 Rows keep insertion order; scd2 versions of a key are oldest first. List order
 carries no meaning except scd2 version order within a key, so a harness must
-compare in a canonical order. NaN is not supported (Python ``!=`` differs from
-Spark null-safe equality).
+compare in a canonical order. NaN follows Spark: it is the highest value of an order
+and equal to itself (``_seq``, ``_eq``).
 
 Order of operations in ``apply_batch``: (1) the NULL-key drop (scd1/scd2, and
 unknown_member tables of every strategy; a NULL-key delete
@@ -130,8 +130,13 @@ def dedupe_winner(table: ModelTable, k: tuple, grp: list[dict]) -> dict:
     return tied[0]
 
 
+def _eq(a: Any, b: Any) -> bool:
+    """Spark's null-safe equality for the values the model holds: NaN equals NaN."""
+    return a == b or (a != a and b != b)
+
+
 def _differs(a: dict, b: dict, cols: list[str]) -> bool:
-    return any(a[c] != b[c] for c in cols)
+    return any(not _eq(a[c], b[c]) for c in cols)
 
 
 def apply_batch(
