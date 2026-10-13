@@ -211,6 +211,27 @@ def _validate_merge(path: str, merge: Any, strategy: str | None) -> None:
             reason="scd2 cannot be combined with delete_mode: hard (it would destroy history)",
         )
 
+    snapshot = merge.get("snapshot", False)
+    if not isinstance(snapshot, bool):
+        raise ConfigError(path=f"{path}.snapshot", reason="must be true or false")
+    if snapshot and strategy not in ("scd1", "scd2"):
+        raise ConfigError(
+            path=f"{path}.snapshot", reason="is only available for the scd1 and scd2 strategies"
+        )
+    for key in ("snapshot_max_missing_ratio", "snapshot_allow_empty"):
+        if key in merge and not snapshot:
+            raise ConfigError(path=f"{path}.{key}", reason="needs snapshot: true")
+    ratio = merge.get("snapshot_max_missing_ratio")
+    if ratio is not None and (
+        isinstance(ratio, bool) or not isinstance(ratio, int | float) or not 0 <= ratio <= 1
+    ):
+        raise ConfigError(
+            path=f"{path}.snapshot_max_missing_ratio", reason="must be a number from 0 to 1"
+        )
+    allow_empty = merge.get("snapshot_allow_empty")
+    if allow_empty is not None and not isinstance(allow_empty, bool):
+        raise ConfigError(path=f"{path}.snapshot_allow_empty", reason="must be true or false")
+
 
 def _is_str_list(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)

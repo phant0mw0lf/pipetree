@@ -157,6 +157,26 @@
           },
           "title": "Ignore Columns",
           "type": "array"
+        },
+        "snapshot": {
+          "default": false,
+          "description": "The batch is the complete current state of the source (scd1 and scd2 only). An active key of the table that is not in the batch is handled like a delete row, following delete_mode.",
+          "title": "Snapshot",
+          "type": "boolean"
+        },
+        "snapshot_max_missing_ratio": {
+          "default": 0.5,
+          "description": "With snapshot: the table fails and nothing is written when more than this share of its active keys is missing from the batch.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Snapshot Max Missing Ratio",
+          "type": "number"
+        },
+        "snapshot_allow_empty": {
+          "default": false,
+          "description": "With snapshot: an empty batch is an error unless this is true (then every active key counts as missing, subject to snapshot_max_missing_ratio).",
+          "title": "Snapshot Allow Empty",
+          "type": "boolean"
         }
       },
       "title": "Merge",
