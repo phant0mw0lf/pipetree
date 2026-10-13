@@ -178,3 +178,31 @@ jobs:
             [ "$TESTS" = "skipped" ] || { echo "tests should have been skipped" >&2; exit 1; }
             echo "no code changes: tests skipped"
           fi
+
+  # The ruleset on main requires the status `codecov/patch`, which Codecov only
+  # sets after a coverage upload. A pull request without code changes skips the
+  # tests, so nothing is uploaded and the status never appears: the PR would stay
+  # blocked although every check is green. Set the status here instead. It never
+  # runs when code changed (Codecov reports the real value then). The commit
+  # status API needs `statuses: write`, so a pull request from a fork (read-only
+  # token) cannot set it.
+  codecov-patch-skip:
+    name: codecov-patch-skip
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Set codecov/patch to success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          gh api "repos/$REPO/statuses/$SHA" \
+            -f state=success \
+            -f context=codecov/patch \
+            -f description="no code changes, coverage not measured"
