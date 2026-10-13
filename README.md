@@ -41,7 +41,7 @@ AUTO CDC translation. Phase C (Databricks/Fabric) is described in `examples/data
 ```bash
 pip install pipetree-meta            # core: config loader, graph, executor, CLI
 pip install "pipetree-meta[spark]"   # + PySpark and Delta Lake for local runs
-pip install "pipetree-meta[azure]"   # + azure-identity for secretless auth
+pip install "pipetree-meta[azure]"   # + Key Vault secrets, token auth, failure email
 ```
 
 The import package and the CLI command are `pipetree`.

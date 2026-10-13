@@ -75,7 +75,7 @@ The email client signs in with a token, never with the connection string.
 3. Provide the identity to the run:
    - **Databricks:** create a Unity Catalog service credential from an Access Connector and give its identity the role above. Grant `ACCESS` on the credential to the job's principal and register it for the audience `https://communication.azure.com` in `DatabricksPlatform(service_credentials={"https://communication.azure.com": "<credential name>"})`. See [Databricks](../databricks/).
    - **Fabric, a laptop, CI:** the client uses `DefaultAzureCredential`: `az login` locally, a managed identity or workload identity elsewhere. Fabric's `notebookutils.credentials.getToken` has no audience key for Communication Services.
-4. Install the SDK: `pip install "pipetree[azure]"` (it brings `azure-communication-email`).
+4. Install the SDK: `pip install "pipetree-meta[azure]"` (it brings `azure-communication-email`).
 
 Without a service credential entry on Databricks, the platform falls back to `DefaultAzureCredential`.
 

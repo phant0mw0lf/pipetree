@@ -11,6 +11,8 @@ databricks bundle deploy -t dev
 databricks bundle run pipetree_example -t dev
 ```
 
+Install `pipetree-meta` on the cluster, with `[azure]` for Key Vault secrets or the failure email, and without `[spark]`: the runtime has its own PySpark and Delta.
+
 `databricks.yml` defines a job with a `notebook_task` that runs `run_on_databricks.py`, a source-format notebook. It builds a `DatabricksPlatform` and a `SparkAdapter` on the cluster session and calls `run_pipeline` with a live dependency tree under the run cell:
 
 ```python
