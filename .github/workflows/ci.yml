@@ -107,6 +107,14 @@ jobs:
     if: needs.changes.outputs.code == 'true' && needs.lint.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # pyproject.toml declares Python 3.11 to 3.13: the suite runs on all three. The
+    # coverage upload and the large conformance seed set stay with 3.12 (.python-version).
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,7 +126,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install
+        run: uv python install "$UV_PYTHON"
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
@@ -140,13 +148,14 @@ jobs:
           # reaching every coverage case); else 5. The nightly Conformance
           # workflow runs seeds 0-299. The fixed regression corpus
           # and the hand-built cases run regardless.
-          PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && 'pr' || '5' }}
+          PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && matrix.python == '3.12' && 'pr' || '5' }}
         run: uv run pytest --cov --cov-report=xml -n 4 --maxfail=5 -rs --durations=25 -v
 
       # Runs only when the tests ran (this job is skipped otherwise). Pull
       # requests from forks get no secret: the token is then empty and the action
       # uploads tokenless. An upload problem never fails the check.
       - name: Upload coverage to Codecov
+        if: matrix.python == '3.12'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
