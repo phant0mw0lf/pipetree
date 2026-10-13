@@ -96,6 +96,32 @@ def test_scd1_dedupe_picks_highest_sequence_and_counts():
     assert stats.duplicates_dropped == 2
 
 
+NAN = float("nan")  # one object: dict equality shortcuts on identity
+
+
+def test_nan_is_the_highest_sequence_and_equal_to_itself():
+    t = T("scd1", sequence_by=("seq",))
+    state, stats = run(t, B({"id": 1, "v": "n", "seq": NAN}, {"id": 1, "v": "n", "seq": 5}))
+    assert state == [R(1, "n", seq=NAN, e=1)]
+    assert stats.duplicates_dropped == 1
+    # the same NaN row again: tied, identical (not ambiguous), nothing changes
+    state, stats = run(
+        t,
+        B({"id": 1, "v": "n", "seq": NAN}),
+        B({"id": 1, "v": "n", "seq": float("nan")}, {"id": 1, "v": "n", "seq": NAN}),
+    )
+    assert state == [R(1, "n", seq=NAN, e=1)]
+    # an older number does not beat a stored NaN
+    state, _ = run(t, B({"id": 1, "v": "n", "seq": NAN}), B({"id": 1, "v": "old", "seq": 99}))
+    assert state == [R(1, "n", seq=NAN, e=1)]
+
+
+def test_a_nan_in_a_tracked_column_is_not_a_change_when_it_comes_again():
+    t = T("scd1")
+    state, _ = run(t, B({"id": 1, "v": "a", "w": NAN}), B({"id": 1, "v": "a", "w": float("nan")}))
+    assert state == [R(1, "a", w=NAN, e=1)]
+
+
 def test_dedupe_without_sequence_by_takes_the_first_of_identical_rows():
     t = T("scd1")
     state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 1, "v": "a"}, {"id": 2, "v": "c"}))

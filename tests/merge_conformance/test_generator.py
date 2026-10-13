@@ -17,6 +17,7 @@ TYPE_OPTION_NAMES = {
     "sequence_in_ignore_columns",
     "surrogate_key_without_unknown_member",
     "composite_sequence_mixed_types",
+    "sequence_nan",
 }
 
 
@@ -62,7 +63,8 @@ def _check_valid(case: Case, strategy: str) -> None:
         for batch in case.batches:
             for row in batch:
                 assert row[c] is None or type(row[c]) is py, (case.repr_line(), c, row[c])
-                assert row[c] is None or row[c] == row[c]  # never NaN
+                # NaN only where the case types the column double (the model compares it like Spark)
+                assert row[c] is None or row[c] == row[c] or case.column_types.get(c) == "double"
     assert 2 <= len(case.batches) <= 6
     assert all(0 <= i < len(case.batches) for i in case.inits)
     keys_seen = set()
@@ -137,6 +139,7 @@ def test_coverage_names_are_the_documented_ones():
         "sequence_in_ignore_columns",
         "surrogate_key_without_unknown_member",
         "composite_sequence_mixed_types",
+        "sequence_nan",
     }
 
 

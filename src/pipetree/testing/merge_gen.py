@@ -22,8 +22,9 @@ stream of the base generator - and every case that uses none of the options - is
   ``w`` when ``sequence_by`` is ``(seq, w)``) are mapped, order-preserving and injectively, to
   ``timestamp`` (2024-01-01 + n minutes), ``string`` (``f"{n:06d}"``, binary order), ``decimal``
   (``n / 4``, ``decimal(10,2)``) or ``double`` (``n / 2``); NULL stays NULL. The Spark column
-  types are in ``Case.column_types``. NaN is NOT generated: the model's ``_seq`` and its row
-  comparison (Python ``!=``) do not support NaN (Spark orders NaN highest and equal to itself).
+  types are in ``Case.column_types``. For ``double`` the LARGEST value of the column in the whole
+  history becomes NaN (Spark orders NaN highest and equal to itself, so the order is kept and
+  the mapping stays injective); the model compares NaN like Spark (``_seq``, ``_eq``).
 - a composite ``sequence_by`` of two columns of different types (``seq`` and ``w`` drawn
   independently).
 - ``seq`` also listed in ``ignore_columns`` (scd1/scd2): the sequence column is ignored for
@@ -66,6 +67,7 @@ COVERAGE_NAMES = (
     "sequence_in_ignore_columns",
     "surrogate_key_without_unknown_member",
     "composite_sequence_mixed_types",
+    "sequence_nan",
 )
 
 DELETE_WHEN = "op = 'D'"
@@ -275,15 +277,17 @@ def _with_types(case: Case, strategy: str, seed: int) -> Case:
     typed = {c: n for c, n in (("seq", seq_type), ("w", w_type)) if c in t.sequence_by}
     typed = {c: n for c, n in typed.items() if n != "int"}
     batches = case.batches
+    nan_at = {
+        c: max((r[c] for b in case.batches for r in b if r[c] is not None), default=None)
+        for c, n in typed.items()
+        if n == "double"
+    }
     if typed:
         batches = [
             [
                 {
                     **r,
-                    **{
-                        c: None if r[c] is None else _SEQ_TYPES[n][1](r[c])
-                        for c, n in typed.items()
-                    },
+                    **{c: _typed_value(n, r[c], nan_at.get(c)) for c, n in typed.items()},
                 }
                 for r in batch
             ]
@@ -296,6 +300,18 @@ def _with_types(case: Case, strategy: str, seed: int) -> Case:
         batches=batches,
         column_types={c: _SEQ_TYPES[n][0] for c, n in typed.items()},
     )
+
+
+# One NaN object, so cases compare equal to themselves (dict equality shortcuts on identity).
+_NAN = float("nan")
+
+
+def _typed_value(type_name: str, n: int | None, nan_at: int | None) -> Any:
+    if n is None:
+        return None
+    if n == nan_at:
+        return _NAN
+    return _SEQ_TYPES[type_name][1](n)
 
 
 def _null_some_flags(rows: list[dict], table: ModelTable, seed: int) -> None:
@@ -408,6 +424,7 @@ def coverage(case: Case) -> set[str]:
     - sequence_in_ignore_columns: a ``sequence_by`` column that is also in ``ignore_columns``.
     - surrogate_key_without_unknown_member: a surrogate key on a table without unknown member.
     - composite_sequence_mixed_types: ``sequence_by`` of two columns of different types.
+    - sequence_nan: a row whose ``sequence_by`` column holds NaN (a ``double`` column).
     """
     t = case.table
     got: set[str] = set()
@@ -421,6 +438,13 @@ def coverage(case: Case) -> set[str]:
         got.add("surrogate_key_without_unknown_member")
     if len(set(seq_kinds.values())) > 1:
         got.add("composite_sequence_mixed_types")
+    if any(
+        isinstance(r[c], float) and r[c] != r[c]
+        for b in case.batches
+        for r in b
+        for c in t.sequence_by
+    ):
+        got.add("sequence_nan")
     scd = t.strategy in ("scd1", "scd2")
     tracked = [c for c in t.columns if c not in t.key and c not in t.ignore]
     state: list[dict] = []

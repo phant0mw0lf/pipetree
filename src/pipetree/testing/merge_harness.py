@@ -140,8 +140,28 @@ class Divergence:
 # ------------------------------------------------------------------ normalise
 
 
+class _NaN:
+    """Stands for NaN in a compared row: one object, so two rows with NaN are equal
+    (Spark: NaN equals NaN; Python: ``nan != nan``)."""
+
+    def __repr__(self) -> str:
+        return "NaN"
+
+
+NAN = _NaN()
+
+
+def _nan_safe(row: dict) -> dict:
+    return {k: NAN if isinstance(v, float) and v != v else v for k, v in row.items()}
+
+
 def _sort_value(v: Any) -> tuple:
-    return (v is not None, 0 if v is None else v)
+    """NULL lowest, NaN highest, otherwise the natural order (Spark's)."""
+    if v is None:
+        return (0, 0)
+    if isinstance(v, float) and v != v:
+        return (2, 0)
+    return (1, v)
 
 
 def _version_order(t: ModelTable, row: dict) -> tuple:
@@ -169,7 +189,7 @@ def _compared_columns(t: ModelTable) -> list[str]:
 
 
 def _project(t: ModelTable, row: dict) -> dict:
-    out = {c: row[c] for c in _compared_columns(t)}
+    out = _nan_safe({c: row[c] for c in _compared_columns(t)})
     if t.unknown_member and is_unknown_member(t, out):
         del out["_execution_id"]  # seeding time is not compared
     return out
@@ -323,7 +343,7 @@ def check_invariants(
         problems.append(("unknown_member_once", f"unknown member exists {len(unknown)} times"))
     if prev is not None and not rebuilt:
         before = _unknown_rows(t, prev)
-        if len(before) == 1 and before != unknown:
+        if len(before) == 1 and [_nan_safe(r) for r in before] != [_nan_safe(r) for r in unknown]:
             problems.append(
                 ("unknown_member_unchanged", f"unknown member changed: {before} -> {unknown}")
             )
@@ -353,7 +373,7 @@ def check_invariants(
                 if p["_is_current"]:
                     continue
                 n = now_by_id.get(_identity(t, p))
-                if n != p:
+                if n is None or _nan_safe(n) != _nan_safe(p):
                     problems.append(("scd2_closed_changed", f"closed version changed: {p} -> {n}"))
 
     sk = case.surrogate_key
