@@ -227,6 +227,11 @@ def _apply_scd1(table: ModelTable, state: list[dict], winners: list[dict], n: in
                 # a delete for an absent key is a no-op + idempotence: re-deleting a deleted row is
                 # a no-op (no bump).
                 # Soft delete keeps the existing non-key values, only the audit changes.
+                # The delete row's sequence_by values are stored, so a later row with a lower
+                # sequence is ignored by the check above.
+                for c in table.sequence_by:
+                    if c not in table.key:
+                        existing[c] = new[c]
                 existing.update(_is_deleted=True, _execution_id=n)
             continue
         if existing is None:

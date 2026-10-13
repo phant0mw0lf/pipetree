@@ -969,6 +969,62 @@ def test_soft_delete_row_with_the_higher_sequence_still_wins(spark, strategy):
     assert [r[2] for r in _snapshot(spark, table)] == [True]
 
 
+def _soft_seq_state(spark, table):
+    r = rows(spark.table(table.fqn))[1]
+    return r["name"], r["seq"], r["_is_deleted"], r["_execution_id"]
+
+
+def test_scd1_soft_delete_keeps_its_sequence_so_a_later_lower_row_is_ignored(spark):
+    table = _del_table("soft_keeps_seq", "scd1", "soft")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+    _del_run(spark, table, [(1, "a", True, 10)], 2)
+
+    _del_run(spark, table, [(1, "b", False, 5)], 3)
+
+    assert _soft_seq_state(spark, table) == ("a", 10, True, 2)
+
+
+def test_scd1_soft_delete_stores_the_delete_rows_sequence_and_audit(spark):
+    table = _del_table("soft_stores_seq", "scd1", "soft")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+
+    _del_run(spark, table, [(1, "a", True, 10)], 2)
+
+    assert _soft_seq_state(spark, table) == ("a", 10, True, 2)
+
+
+def test_scd1_soft_deleted_key_with_an_equal_sequence_revives_the_later_batch_wins(spark):
+    table = _del_table("soft_equal_seq", "scd1", "soft")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+    _del_run(spark, table, [(1, "a", True, 10)], 2)
+
+    _del_run(spark, table, [(1, "b", False, 10)], 3)
+
+    assert _soft_seq_state(spark, table) == ("b", 10, False, 3)
+
+
+def test_scd1_soft_deleted_key_with_a_higher_sequence_revives(spark):
+    table = _del_table("soft_higher_seq", "scd1", "soft")
+    _del_run(spark, table, [(1, "a", False, 1)], 1)
+    _del_run(spark, table, [(1, "a", True, 10)], 2)
+
+    _del_run(spark, table, [(1, "b", False, 11)], 3)
+
+    assert _soft_seq_state(spark, table) == ("b", 11, False, 3)
+
+
+def test_scd1_older_delete_row_is_ignored_and_a_deleted_row_stays_a_no_op(spark):
+    table = _del_table("soft_old_delete", "scd1", "soft")
+    _del_run(spark, table, [(1, "a", False, 5)], 1)
+    _del_run(spark, table, [(1, "a", True, 3)], 2)
+    assert _soft_seq_state(spark, table) == ("a", 5, False, 1)
+
+    _del_run(spark, table, [(1, "a", True, 7)], 3)
+    _del_run(spark, table, [(1, "a", True, 8)], 4)  # already deleted: no-op, no bump
+
+    assert _soft_seq_state(spark, table) == ("a", 7, True, 3)
+
+
 def test_hard_delete_row_with_the_higher_sequence_still_wins(spark):
     table = _del_table("hard_seq", "scd1", "hard")
     _del_run(spark, table, [(1, "a", False, 1)], 1)

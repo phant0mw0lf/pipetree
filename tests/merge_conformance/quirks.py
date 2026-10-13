@@ -144,6 +144,9 @@ class QuirkModel:
                 if table.delete_mode == "hard":
                     state.remove(existing)
                 elif not existing["_is_deleted"]:
+                    for c in table.sequence_by:  # the delete row's sequence is stored
+                        if c not in table.key:
+                            existing[c] = new[c]
                     existing.update(_is_deleted=True, _execution_id=n)
                 continue
             if existing is None:
