@@ -40,6 +40,7 @@ def test_build_run_log_rows_includes_core_fields_from_graph_and_result():
             "error_message": None,
             "null_keys_dropped": None,
             "run_tags": [],
+            "snapshot_deleted": None,
         }
     ]
 
@@ -144,6 +145,26 @@ def test_build_run_log_rows_carries_null_keys_dropped():
     )
 
     assert build_run_log_rows(digest, graph)[0]["null_keys_dropped"] == 4
+
+
+def test_build_run_log_rows_carries_snapshot_deleted():
+    graph = make_graph({"bronze.orders": "scd1"})
+    digest = RunDigest(
+        execution_id=1,
+        results={
+            "bronze.orders": TableResult(
+                "bronze.orders",
+                TableStatus.SUCCEEDED,
+                1,
+                1,
+                2,
+                5,
+                details={"rows_written": 3, "snapshot_deleted": 2},
+            )
+        },
+    )
+
+    assert build_run_log_rows(digest, graph)[0]["snapshot_deleted"] == 2
 
 
 def _digest_for(graph):

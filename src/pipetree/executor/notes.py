@@ -1,8 +1,9 @@
 """Notes: what a merge quietly changed, and what a partial run left out.
 
-A merge that drops duplicate rows, drops NULL-key rows or adapts to schema
-drift still succeeds - so the fact is easy to miss. `notes_for` turns the
-details a table's run produced into short strings every surface can show
+A merge that drops duplicate rows, drops NULL-key rows, deletes the keys a
+`merge.snapshot` batch no longer has or adapts to schema drift still
+succeeds - so the fact is easy to miss. `notes_for` turns the details a
+table's run produced into short strings every surface can show
 (console digest, graph badge, live view) without each re-deriving the
 wording. A table that ran while a direct parent did not (a `--select` or
 `--tag` run) is noted too. Pure: no Spark, no logging.
@@ -20,6 +21,8 @@ def notes_for(details: Mapping[str, Any]) -> list[str]:
         notes.append(f"{duplicates} duplicate row(s) dropped")
     if (null_keys := details.get("null_keys_dropped") or 0) > 0:
         notes.append(f"{null_keys} NULL-key row(s) dropped")
+    if (snapshot_deleted := details.get("snapshot_deleted") or 0) > 0:
+        notes.append(f"snapshot: {snapshot_deleted} key(s) not in the source were deleted")
     notes.extend(f"schema: {change}" for change in details.get("schema_changes") or ())
     notes.extend(
         f"input not refreshed: {parent}" for parent in details.get("inputs_not_refreshed") or ()
