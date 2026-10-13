@@ -16,6 +16,6 @@ sidebar:
 - `notebookutils` is assumed to be a global, with `notebookutils.credentials.getSecret(vault_url, secret_name)` for secrets.
 - `FabricPlatform` resolves paths to `Files/<relative path>`, which needs the default lakehouse attached. The notebook's `CONFIG_PATH` uses the mounted form `/lakehouse/default/Files/...`. They are different strings.
 - Token auth (`auth.mode: aad_token`) runs as the notebook's executing identity and supports a limited set of audiences (`storage`, `pbi`, `keyvault`, `kusto`, Kusto cluster URIs).
-- `surrogate_key` needs Delta identity columns, which Fabric Runtime 1.3 lacks.
+- `surrogate_key` needs Delta identity columns, which Fabric Runtime 1.3 lacks: use Runtime 2.0.
 
 To follow a run in the notebook, pass an observer: `run_pipeline("pipeline.yaml", observer=LiveGraphView())` from `pipetree.notebook` redraws the graph in place.

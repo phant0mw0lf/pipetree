@@ -412,11 +412,10 @@ At run time:
 Identity columns need Delta Lake 3.3+ (on delta-spark 4.0.1, the
 local engine, through the `DeltaTable` builder; OSS's SQL `CREATE TABLE`
 rejects the identity clause) or Databricks Runtime 10.4+ (SQL DDL).
-**Fabric Runtime 1.3 (Spark 3.5, Delta 3.2) has no identity columns, and
-Microsoft's Delta Lake interoperability page ("Current limitations") lists
-"Identity columns writing" as unsupported in Fabric without naming a runtime -
-so Fabric, including Runtime 2.0 (Spark 4.1, Delta 4.2), is unsupported for
-`surrogate_key`.** On an engine without them, the first run fails with an error
+**Fabric Runtime 1.3 (Spark 3.5, Delta 3.2) has no identity columns, so on
+Fabric `surrogate_key` needs Runtime 2.0 (Spark 4.1, Delta 4.2), where the
+table is created through the `DeltaTable` builder like on the local engine.**
+On an engine without them, the first run fails with an error
 naming this requirement rather than a raw Spark error. AUTO CDC translation
 (`pipetree.declarative`) refuses `surrogate_key` instead of dropping it.
 
