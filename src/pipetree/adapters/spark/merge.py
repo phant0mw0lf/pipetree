@@ -353,7 +353,7 @@ def _plan_late_versions(
     reconciliation: SchemaReconciliation,
 ) -> tuple[list[tuple[dict[str, Any], int]], DataFrame]:
     """Split the batch (one row per key) at `sequence_by`: returns the plan for the rows older
-    than their key's latest version (by `_valid_from`, deleted or not) and the rest of the
+    than their key's latest version (by sequence, then run; deleted or not) and the rest of the
     batch, which keeps the ordinary close/open merge.
 
     A late delete row is ignored. A late data row is a no-op when it equals (tracked columns)
@@ -374,11 +374,13 @@ def _plan_late_versions(
             "_rn",
             F.row_number().over(
                 Window.partitionBy(*table.business_key).orderBy(
-                    F.col("_valid_from").desc(),
-                    # an empty-interval late version shares its _valid_from with the next one
+                    # the version order is the sequence, then the run (monotonic), never the
+                    # wall clock: `_valid_from` of two runs may skew or tie
                     *[F.col(c).desc_nulls_last() for c in seq_cols if c in target_columns],
                     # late versions of equal sequence: the later batch is the later version
                     F.col("_execution_id").desc(),
+                    # last tie-breaks only
+                    F.col("_valid_from").desc(),
                     F.col("_inserted_at").desc(),
                 )
             ),
@@ -425,7 +427,7 @@ def _plan_late_versions(
         key = tuple(row[k] for k in keys)
         versions = sorted(
             history[key],
-            key=lambda v: (v["_valid_from"], seq_of(v), v["_execution_id"], v["_inserted_at"]),
+            key=lambda v: (seq_of(v), v["_execution_id"], v["_valid_from"], v["_inserted_at"]),
         )
         seq = seq_of(row)
         pos = next(i for i, v in enumerate(versions) if seq_of(v) > seq)

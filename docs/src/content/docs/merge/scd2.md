@@ -35,7 +35,7 @@ One row per version. The current version has `_is_current = true`. A change in a
 
 Rules:
 
-- **Order**: with `sequence_by`, versions are ordered by it, not by arrival. A tie across batches: the later batch is newer. NULL sorts lowest.
+- **Order**: with `sequence_by`, versions are ordered by it, not by arrival. A tie across batches: the later batch is newer. NULL sorts lowest. The latest version of a key is found by the sequence, then by the run, never by the `_valid_from` clock, so a skewed or repeated clock cannot make an older version current.
 - **Late rows**: a row older than the latest version is inserted as a closed version after the version valid at its sequence (first, if none is older). If it equals that version in the tracked columns it is a no-op. A late delete row is ignored. No other version changes, and the version with the highest sequence stays current.
 - **Late versions have an empty validity interval.** `_valid_from` and `_valid_to` are processing times, and a late version was never valid in processing time. It shows in the history but a point-in-time query never returns it.
 - **Unchanged row**: no new version. Same batch twice: no change.

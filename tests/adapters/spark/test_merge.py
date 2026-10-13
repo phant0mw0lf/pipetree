@@ -1282,3 +1282,55 @@ def test_scd2_delete_of_a_partially_null_key_closes_the_current_version(spark):
     _nk_run(spark, table, [(None, 1, "x", True)], 3)
 
     assert _nk_state(spark, table) == [(None, 1, "x", True, False)]
+
+
+# ------------------------------------------- scd2 version order is not the wall clock
+
+
+BASE_CLOCK = 260101000000000  # YYMMddHHmmssSSS is a bigint
+
+
+def _clocked_scd2_run(spark, monkeypatch, table, data, execution_id, clock):
+    """One scd2 run whose pipeline clock reads `clock` (a `_valid_from` value)."""
+    monkeypatch.setattr(
+        "pipetree.adapters.spark.merge.timestamp_bigint", lambda: BASE_CLOCK + clock
+    )
+    df = spark.createDataFrame(data, ["id", "name", "seq"])
+    return merge_scd2(spark, table, df, execution_id, "crm")
+
+
+def _history(spark, table):
+    """(name, seq, _is_current) per version, ordered by sequence then run."""
+    return [
+        (r["name"], r["seq"], r["_is_current"])
+        for r in spark.table(table.fqn).orderBy("seq", "_execution_id").collect()
+    ]
+
+
+@pytest.mark.parametrize("second_run_clock", [1000, 2000], ids=["clock_went_back", "same_clock"])
+def test_scd2_latest_version_follows_the_sequence_not_the_clock(
+    spark, monkeypatch, second_run_clock
+):
+    table = make_table(f"clock_{second_run_clock}", "scd2", merge={"sequence_by": ["seq"]})
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "a", 1)], 1, 2000)
+    # a run whose clock reads earlier than (or equal to) the first run's
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "b", 2)], 2, second_run_clock)
+
+    # seq 1 arrives late: the latest version is `b` (seq 2), whatever `_valid_from` says
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "x", 1)], 3, 3000)
+
+    assert _history(spark, table) == [("a", 1, False), ("x", 1, False), ("b", 2, True)]
+
+
+def test_scd2_late_row_equal_to_the_version_valid_at_its_sequence_is_a_no_op_under_clock_skew(
+    spark, monkeypatch
+):
+    table = make_table("clock_noop", "scd2", merge={"sequence_by": ["seq"]})
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "a", 1)], 1, 2000)
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "b", 3)], 2, 1000)
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "c", 5)], 3, 500)
+
+    # seq 3 again, equal to the version valid at seq 3: nothing to add
+    _clocked_scd2_run(spark, monkeypatch, table, [(1, "b", 3)], 4, 4000)
+
+    assert _history(spark, table) == [("a", 1, False), ("b", 3, False), ("c", 5, True)]
