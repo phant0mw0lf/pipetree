@@ -30,6 +30,19 @@ stream of the base generator - and every case that uses none of the options - is
 - ``seq`` also listed in ``ignore_columns`` (scd1/scd2): the sequence column is ignored for
   change detection but still orders the rows.
 - ``surrogate_key`` without ``unknown_member`` (scd1/scd2).
+
+Snapshot option (a post-pass, ``_with_snapshot``, run BEFORE the type pass on the integer
+values): a SEPARATE ``random.Random(f"snapshot:{strategy}:{seed}")`` turns about 35% of the
+scd1/scd2 cases (every ``delete_mode``, ``ignore`` included) into ``snapshot=True`` cases, all
+others stay exactly as the base generator made them. In a snapshot case every batch becomes the
+full state of a random subset (at least one key) of the case's key universe (the keys that carry
+no NULL anywhere in the case): the subset shrinks and grows over the history; a key of the subset
+keeps the rows the base generator gave it in that batch, or, lacking one, gets a copy of its
+latest earlier row or a fresh row (higher sequence); rows with a NULL key stay as noise (dropped
+first when the batch would exceed 8 rows). The validity rules above still hold (ties stay
+identical or delete-wins, no sentinel keys, at most 8 rows). Generated cases set
+``snapshot_max_missing_ratio=1.0`` and ``snapshot_allow_empty=True`` so no history trips the
+guard (the guard is covered by direct model tests).
 """
 
 from __future__ import annotations
@@ -68,6 +81,8 @@ COVERAGE_NAMES = (
     "surrogate_key_without_unknown_member",
     "composite_sequence_mixed_types",
     "sequence_nan",
+    "snapshot_missing_key",
+    "snapshot_return",
 )
 
 DELETE_WHEN = "op = 'D'"
@@ -95,12 +110,13 @@ class Case:
             else f"hand-built {t.strategy} case"
         )
         delete = f"{t.delete_mode}" if t.has_delete else "none"
+        snap = " snapshot=True" if t.snapshot else ""
         types = f" column_types={self.column_types}" if self.column_types else ""
         return (
             f"{origin}: key={list(t.key)} sequence_by={list(t.sequence_by)} "
             f"ignore={list(t.ignore)} delete={delete} unknown_member={t.unknown_member} "
             f"surrogate_key={self.surrogate_key} batches={len(self.batches)} "
-            f"inits={sorted(self.inits)}{types}"
+            f"inits={sorted(self.inits)}{snap}{types}"
         )
 
 
@@ -241,7 +257,71 @@ def generate_case(seed: int, strategy: str) -> Case:
         batches=batches,
         inits=inits,
     )
-    return _with_types(case, strategy, seed)
+    return _with_types(_with_snapshot(case, strategy, seed), strategy, seed)
+
+
+_SNAPSHOT_SHARE = 0.35
+_MAX_ROWS = 8
+
+
+def _has_null(table: ModelTable, row: dict) -> bool:
+    return any(row[c] is None for c in table.key)
+
+
+def _with_snapshot(case: Case, strategy: str, seed: int) -> Case:
+    """The snapshot post-pass (see the module docstring), on its own random stream."""
+    rng = random.Random(f"snapshot:{strategy}:{seed}")
+    t = case.table
+    chosen = rng.random() < _SNAPSHOT_SHARE
+    if not chosen or t.strategy not in ("scd1", "scd2"):
+        return case
+
+    universe: list[tuple] = []
+    for b in case.batches:
+        for r in b:
+            if not _has_null(t, r) and _key(t, r) not in universe:
+                universe.append(_key(t, r))
+    if not universe:
+        return case
+    seq_counter = max(
+        (r["seq"] for b in case.batches for r in b if r["seq"] is not None), default=0
+    )
+    latest: dict[tuple, dict] = {}  # key -> latest row of the ORIGINAL batches seen so far
+    out: list[list[dict]] = []
+    for b in case.batches:
+        size = rng.randint(1, len(universe))
+        subset = rng.sample(universe, size)
+        rows: list[dict] = []
+        for k in subset:
+            own = [dict(r) for r in b if _key(t, r) == k]
+            if own:
+                rows += own
+            elif k in latest and rng.random() < 0.5:
+                rows.append(dict(latest[k]))
+            else:
+                seq_counter += 1
+                row: dict[str, Any] = dict(zip(t.key, k, strict=True))
+                row.update(
+                    v=rng.choice(("a", "b", "c")),
+                    w=rng.choice((None, 0, 1, 2)),
+                    seq=seq_counter,
+                    op="U",
+                )
+                if "seen" in t.columns:
+                    row["seen"] = rng.randint(0, 3)
+                rows.append(row)
+        noise = [dict(r) for r in b if _has_null(t, r)]
+        rows += noise[: max(0, _MAX_ROWS - len(rows))]
+        if len(rows) > _MAX_ROWS:  # one row per key still fits: at most 8 keys
+            seen: set[tuple] = set()
+            rows = [r for r in rows if not (_key(t, r) in seen or seen.add(_key(t, r)))]
+        rng.shuffle(rows)
+        out.append(rows)
+        for r in b:
+            if not _has_null(t, r):
+                latest[_key(t, r)] = r
+    table = replace(t, snapshot=True, snapshot_max_missing_ratio=1.0, snapshot_allow_empty=True)
+    return replace(case, table=table, batches=out)
 
 
 _BASE = datetime(2024, 1, 1)
@@ -425,6 +505,10 @@ def coverage(case: Case) -> set[str]:
     - surrogate_key_without_unknown_member: a surrogate key on a table without unknown member.
     - composite_sequence_mixed_types: ``sequence_by`` of two columns of different types.
     - sequence_nan: a row whose ``sequence_by`` column holds NaN (a ``double`` column).
+    - snapshot_missing_key (snapshot, delete_mode not ignore): a key active before a batch is
+      absent from it (the snapshot deletes it).
+    - snapshot_return: a key a snapshot batch deleted comes back in a later batch (since the
+      last init).
     """
     t = case.table
     got: set[str] = set()
@@ -449,6 +533,7 @@ def coverage(case: Case) -> set[str]:
     tracked = [c for c in t.columns if c not in t.key and c not in t.ignore]
     state: list[dict] = []
     ever: set[tuple] = set()  # keys with a row in some state since the last init
+    snap_gone: set[tuple] = set()  # keys a snapshot batch deleted since the last init
     for i, batch in enumerate(case.batches):
         init = i in case.inits
         if init and i > 0:
@@ -484,9 +569,20 @@ def coverage(case: Case) -> set[str]:
         base = [] if init else state
         if init:
             ever = set()
+            snap_gone = set()
         present_before, active_before = _rows_by_key(t, base)
         new_state, _ = apply_batch(t, state, batch, i + 1, init=init)
         _, active_after = _rows_by_key(t, new_state)
+        if t.snapshot:
+            batch_keys = {_key(t, r) for r in batch}
+            if snap_gone & batch_keys:
+                got.add("snapshot_return")
+            snap_gone -= batch_keys
+            if t.delete_mode != "ignore" or not t.has_delete:
+                missing = set(active_before) - batch_keys
+                if missing:
+                    got.add("snapshot_missing_key")
+                    snap_gone |= missing
 
         for r in batch:
             k = _key(t, r)
