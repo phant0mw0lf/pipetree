@@ -135,10 +135,12 @@ jobs:
       - name: Test
         env:
           PIPETREE_REQUIRE_SPARK: "1"
-          # 25 seeds per strategy when the merge machinery changed, else 5; the
-          # nightly Conformance workflow runs 300. The fixed regression corpus
+          # When the merge machinery changed: the fixed, coverage-directed seeds
+          # of tests/merge_conformance/pr_seeds.py (about 25 per strategy, together
+          # reaching every coverage case); else 5. The nightly Conformance
+          # workflow runs seeds 0-299. The fixed regression corpus
           # and the hand-built cases run regardless.
-          PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && '25' || '5' }}
+          PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && 'pr' || '5' }}
         run: uv run pytest --cov --cov-report=xml -n 4 --maxfail=5 -rs --durations=25 -v
 
       # Runs only when the tests ran (this job is skipped otherwise). Pull
