@@ -13,13 +13,31 @@ sentinel (no int key is ever ``-1``), scd2 never uses ``delete_mode: hard``,
 ``op`` is ``"D"`` for a delete row; any other row has ``"U"``, or, on a table with a delete
 flag, ``None`` for a deterministic share of them (the delete expression is then NULL: not a
 delete).
+
+Type options (a post-pass, ``_with_types``): after the case above is generated, a SEPARATE
+``random.Random(f"types:{strategy}:{seed}")`` decides on four extra options, so the random
+stream of the base generator - and every case that uses none of the options - is unchanged:
+
+- ``sequence_by`` columns that are not integers: the integer sequence values of ``seq`` (and of
+  ``w`` when ``sequence_by`` is ``(seq, w)``) are mapped, order-preserving and injectively, to
+  ``timestamp`` (2024-01-01 + n minutes), ``string`` (``f"{n:06d}"``, binary order), ``decimal``
+  (``n / 4``, ``decimal(10,2)``) or ``double`` (``n / 2``); NULL stays NULL. The Spark column
+  types are in ``Case.column_types``. NaN is NOT generated: the model's ``_seq`` and its row
+  comparison (Python ``!=``) do not support NaN (Spark orders NaN highest and equal to itself).
+- a composite ``sequence_by`` of two columns of different types (``seq`` and ``w`` drawn
+  independently).
+- ``seq`` also listed in ``ignore_columns`` (scd1/scd2): the sequence column is ignored for
+  change detection but still orders the rows.
+- ``surrogate_key`` without ``unknown_member`` (scd1/scd2).
 """
 
 from __future__ import annotations
 
 import random
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from pipetree.testing.merge_model import ModelTable, apply_batch, is_unknown_member
@@ -41,6 +59,13 @@ COVERAGE_NAMES = (
     "partial_null_key",
     "late_older_sequence",
     "init_midway",
+    "sequence_timestamp",
+    "sequence_string",
+    "sequence_decimal",
+    "sequence_double",
+    "sequence_in_ignore_columns",
+    "surrogate_key_without_unknown_member",
+    "composite_sequence_mixed_types",
 )
 
 DELETE_WHEN = "op = 'D'"
@@ -57,6 +82,8 @@ class Case:
     surrogate_key: str | None
     batches: list[list[dict]]
     inits: frozenset[int]
+    # Spark DDL type per column that is not the default (int/string); empty for a plain case.
+    column_types: dict[str, str] = field(default_factory=dict)
 
     def repr_line(self) -> str:
         t = self.table
@@ -66,11 +93,12 @@ class Case:
             else f"hand-built {t.strategy} case"
         )
         delete = f"{t.delete_mode}" if t.has_delete else "none"
+        types = f" column_types={self.column_types}" if self.column_types else ""
         return (
             f"{origin}: key={list(t.key)} sequence_by={list(t.sequence_by)} "
             f"ignore={list(t.ignore)} delete={delete} unknown_member={t.unknown_member} "
             f"surrogate_key={self.surrogate_key} batches={len(self.batches)} "
-            f"inits={sorted(self.inits)}"
+            f"inits={sorted(self.inits)}{types}"
         )
 
 
@@ -203,13 +231,70 @@ def generate_case(seed: int, strategy: str) -> Case:
     if has_delete and delete_mode != "ignore":
         batches = _add_delete_ties(batches, table, random.Random(f"deltie:{strategy}:{seed}"))
 
-    return Case(
+    case = Case(
         seed=seed,
         table=table,
         delete_when=DELETE_WHEN if has_delete else None,
         surrogate_key=surrogate_key,
         batches=batches,
         inits=inits,
+    )
+    return _with_types(case, strategy, seed)
+
+
+_BASE = datetime(2024, 1, 1)
+
+# type name -> (Spark DDL type, int -> value); each mapping is injective and order preserving.
+_SEQ_TYPES: dict[str, tuple[str, Any]] = {
+    "int": ("int", lambda n: n),
+    "timestamp": ("timestamp", lambda n: _BASE + timedelta(minutes=n)),
+    "string": ("string", lambda n: f"{n:06d}"),
+    "decimal": ("decimal(10,2)", lambda n: Decimal(n) / 4),
+    "double": ("double", lambda n: n / 2),
+}
+_SEQ_TYPE_NAMES = tuple(_SEQ_TYPES)
+
+
+def _with_types(case: Case, strategy: str, seed: int) -> Case:
+    """The type options post-pass (see the module docstring). All draws are made
+    unconditionally, in a fixed order, so one option never shifts another."""
+    rng = random.Random(f"types:{strategy}:{seed}")
+    seq_type = rng.choice(_SEQ_TYPE_NAMES)
+    w_type = rng.choice(_SEQ_TYPE_NAMES)
+    ignore_seq = rng.random() < 0.25
+    add_sid = rng.random() < 0.4
+
+    t = case.table
+    scd = t.strategy in ("scd1", "scd2")
+    surrogate_key = case.surrogate_key
+    if scd and surrogate_key is None and not t.unknown_member and add_sid:
+        surrogate_key = SURROGATE_KEY
+    if scd and "seq" in t.sequence_by and ignore_seq and "seq" not in t.ignore:
+        t = replace(t, ignore=(*t.ignore, "seq"))
+
+    typed = {c: n for c, n in (("seq", seq_type), ("w", w_type)) if c in t.sequence_by}
+    typed = {c: n for c, n in typed.items() if n != "int"}
+    batches = case.batches
+    if typed:
+        batches = [
+            [
+                {
+                    **r,
+                    **{
+                        c: None if r[c] is None else _SEQ_TYPES[n][1](r[c])
+                        for c, n in typed.items()
+                    },
+                }
+                for r in batch
+            ]
+            for batch in case.batches
+        ]
+    return replace(
+        case,
+        table=t,
+        surrogate_key=surrogate_key,
+        batches=batches,
+        column_types={c: _SEQ_TYPES[n][0] for c, n in typed.items()},
     )
 
 
@@ -319,9 +404,23 @@ def coverage(case: Case) -> set[str]:
     - late_older_sequence (``sequence_by`` set): a row whose sequence tuple is
       lower than that of its key's active row before the batch (no NULLs).
     - init_midway: ``init`` on a batch after the first.
+    - sequence_timestamp / _string / _decimal / _double: a ``sequence_by`` column of that type.
+    - sequence_in_ignore_columns: a ``sequence_by`` column that is also in ``ignore_columns``.
+    - surrogate_key_without_unknown_member: a surrogate key on a table without unknown member.
+    - composite_sequence_mixed_types: ``sequence_by`` of two columns of different types.
     """
     t = case.table
     got: set[str] = set()
+    seq_kinds = {c: case.column_types.get(c, "int").split("(")[0] for c in t.sequence_by}
+    for kind in ("timestamp", "string", "decimal", "double"):
+        if kind in seq_kinds.values():
+            got.add(f"sequence_{kind}")
+    if set(t.sequence_by) & set(t.ignore):
+        got.add("sequence_in_ignore_columns")
+    if case.surrogate_key is not None and not t.unknown_member:
+        got.add("surrogate_key_without_unknown_member")
+    if len(set(seq_kinds.values())) > 1:
+        got.add("composite_sequence_mixed_types")
     scd = t.strategy in ("scd1", "scd2")
     tracked = [c for c in t.columns if c not in t.key and c not in t.ignore]
     state: list[dict] = []
