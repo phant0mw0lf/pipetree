@@ -45,6 +45,26 @@ commit_preprocessors = [
 ]
 commit_parsers = [
     { message = "^chore\\(release\\)", skip = true },
+    # The commits from before the first pull request (the initial build of the package) are one
+    # release step, not 18 changelog lines.
+    { sha = "86577bf8846e3857f79ff8afbbb39547cfb58710", skip = true }, # chore: scaffold pipetree package
+    { sha = "5bb2db523599bfedc4dbe7b05262ba915a4775ee", skip = true }, # feat: config loader and typed model
+    { sha = "513017e4094e05709d787f6d290e408e88737cd9", skip = true }, # feat: graph builder - dependency parsing, topo sort, cycle d
+    { sha = "645158d9a93fd7913d5571d779727b739b4dee35", skip = true }, # feat: executor - ready-queue scheduler, retries, failure han
+    { sha = "132bf0cd0784104d2f7ba418fc44c9e6c5ab2c59", skip = true }, # feat: run log collector, writer, and notifier
+    { sha = "ed26e273da15196fe66a76426b839b8f1cac4992", skip = true }, # feat: Spark/Delta adapter - the four merge strategies
+    { sha = "c41390489a0ac2afc8d4f369d6729a33ada25257", skip = true }, # feat: SparkAdapter - the Adapter protocol wired to Spark/Del
+    { sha = "5fdb55df1dda05488618c3cad3860f4f0cb930fd", skip = true }, # feat: fault-injecting adapter for the demo run
+    { sha = "74f451374aac675c6808c8af412808c0c54395d3", skip = true }, # feat: top-level run_pipeline() API and Delta run log writer
+    { sha = "1a06bae839fac9b2eb08455c13ca84076428fce3", skip = true }, # feat: pipetree CLI (run, validate)
+    { sha = "d9f3e885744e557a5b255d724aa17e2517cb7af7", skip = true }, # feat: real log output from the executor
+    { sha = "b7dd0dbcaf4401d921d087f40f233c1eecd2240e", skip = true }, # feat: example project and part-2 demo run
+    { sha = "3f463815ea4249f5e07347e8bfb8734c991ace06", skip = true }, # docs: NOTES-for-blog.md, README quick start, mark Phase A do
+    { sha = "b99f02987596a6c5a41848f7a5e2f39d3655b8d5", skip = true }, # feat: Phase B - table selection, subtree closure, init, tree
+    { sha = "5af6c3bc40fe1f4d63721c5c993c06aff0444bd0", skip = true }, # feat: Phase C - the Platform seam, Databricks Asset Bundle, 
+    { sha = "a78fedd3aaf534e346bc28fb9ad0ecc6e51172d1", skip = true }, # feat: Phase D - the SourceReader registry
+    { sha = "fb592ce8f84dc2dc54d694a1428ac66188608ae6", skip = true }, # feat: Phase E - schema inference and drift policies
+    { sha = "addb345808a6824bd0f2a0c6c13593cc4fc19507", skip = true }, # feat: Phase F - AUTO CDC translation for declarative pipelin
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug fixes" },
     { message = "^perf", group = "Performance" },
