@@ -142,7 +142,7 @@ class System(BaseModel):
 
 
 class Source(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     system: str = Field(description="Name of a system declared under `systems`.")
     object: str = Field(
@@ -152,7 +152,7 @@ class Source(BaseModel):
 
 
 class Merge(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     sequence_by: list[str] = Field(
         default_factory=list,
@@ -193,7 +193,7 @@ class Merge(BaseModel):
 
 
 class Table(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(description="The table's key under `tables`. Set by the loader.")
     layer: str = Field(description="The layer the table is declared under. Set by the loader.")

@@ -10,6 +10,8 @@ explicit rule.
 
 from __future__ import annotations
 
+import difflib
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +24,18 @@ from pipetree.model import (
     RESERVED_AUDIT_COLUMNS,
     TAG_MAX_LENGTH,
     TAG_PATTERN,
+    Merge,
     Notifications,
+    Source,
+    Table,
 )
 
 RESERVED_TOP_LEVEL_KEYS = {"defaults", "systems", "notifications"}
+# The keys a YAML table, its `merge` and its `source` may carry, taken from the
+# models so they cannot drift. `name`, `layer` and `fqn` are set by the loader.
+TABLE_KEYS = frozenset(Table.model_fields) - {"name", "layer", "fqn"}
+MERGE_KEYS = frozenset(Merge.model_fields)
+SOURCE_KEYS = frozenset(Source.model_fields)
 # Order matches the post's schema (`scd2 | scd1 | replace | append`,
 # `soft | hard | ignore`), not alphabetical, so error messages read the way
 # the docs do.
@@ -100,6 +110,7 @@ def _validate_layer(layer_name: str, layer: Any, systems: dict[str, Any]) -> Non
 def _validate_table(path: str, table: Any, systems: dict[str, Any]) -> None:
     if not isinstance(table, dict):
         raise ConfigError(path=path, reason="must be a mapping")
+    _reject_unknown_keys(path, table, TABLE_KEYS)
 
     has_source = "source" in table
     has_logic = "logic" in table
@@ -140,6 +151,21 @@ def _validate_table(path: str, table: Any, systems: dict[str, Any]) -> None:
 
     if "tags" in table:
         _validate_tags(f"{path}.tags", table["tags"])
+
+    # After unknown_member and surrogate_key, which name their own key when the
+    # business key is missing.
+    if strategy in ("scd1", "scd2") and not table.get("business_key"):
+        raise ConfigError(path=f"{path}.business_key", reason="is required for scd1 and scd2")
+
+
+def _reject_unknown_keys(path: str, block: dict[Any, Any], allowed: Iterable[str]) -> None:
+    names = sorted(allowed)
+    for key in block:
+        if key in names:
+            continue
+        close = difflib.get_close_matches(str(key), names, n=1)
+        hint = f"did you mean {close[0]!r}?" if close else f"allowed keys: {', '.join(names)}"
+        raise ConfigError(path=f"{path}.{key}", reason=f"unknown key {key!r}; {hint}")
 
 
 def _validate_tags(path: str, tags: Any) -> None:
@@ -186,6 +212,7 @@ def _validate_surrogate_key(path: str, table: dict[str, Any], strategy: str) -> 
 def _validate_source(path: str, source: Any, systems: dict[str, Any]) -> None:
     if not isinstance(source, dict) or "system" not in source or "object" not in source:
         raise ConfigError(path=path, reason="must have 'system' and 'object'")
+    _reject_unknown_keys(path, source, SOURCE_KEYS)
 
     system_name = source["system"]
     if system_name not in systems:
@@ -198,6 +225,7 @@ def _validate_source(path: str, source: Any, systems: dict[str, Any]) -> None:
 def _validate_merge(path: str, merge: Any, strategy: str | None) -> None:
     if not isinstance(merge, dict):
         raise ConfigError(path=path, reason="must be a mapping")
+    _reject_unknown_keys(path, merge, MERGE_KEYS)
 
     delete_mode = merge.get("delete_mode", "soft")
     if delete_mode not in VALID_DELETE_MODES:

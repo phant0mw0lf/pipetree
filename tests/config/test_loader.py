@@ -328,3 +328,152 @@ def test_rejects_a_snapshot_ratio_outside_0_to_1(tmp_path: Path, ratio: str):
         load_config(write_config(tmp_path, config))
 
     assert exc_info.value.path == "bronze.tables.customer.merge.snapshot_max_missing_ratio"
+
+
+# ------------------------------------------------------------ unknown keys
+
+
+def _table_config(**table_overrides) -> dict:
+    table = {
+        "source": {"system": "crm", "object": "account"},
+        "business_key": ["accountid"],
+        "strategy": "scd2",
+        **table_overrides,
+    }
+    return {"systems": {"crm": {"type": "synapse_link"}}, "bronze": {"tables": {"customer": table}}}
+
+
+def _reject(raw: dict) -> ConfigError:
+    from pipetree.config.loader import validate_raw
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_raw(raw)
+    return exc_info.value
+
+
+def test_rejects_a_typo_in_a_table_key():
+    error = _reject(_table_config(merg={"sequence_by": ["versionnumber"]}))
+
+    assert error.path == "bronze.tables.customer.merg"
+    assert error.reason == "unknown key 'merg'; did you mean 'merge'?"
+
+
+def test_a_typo_in_source_is_named_before_the_missing_source():
+    raw = _table_config()
+    table = raw["bronze"]["tables"]["customer"]
+    table["sorce"] = table.pop("source")
+
+    error = _reject(raw)
+
+    assert error.path == "bronze.tables.customer.sorce"
+    assert "did you mean 'source'?" in error.reason
+
+
+def test_rejects_a_typo_in_a_merge_key():
+    error = _reject(_table_config(merge={"sequnce_by": ["versionnumber"]}))
+
+    assert error.path == "bronze.tables.customer.merge.sequnce_by"
+    assert error.reason == "unknown key 'sequnce_by'; did you mean 'sequence_by'?"
+
+
+def test_rejects_a_typo_in_a_snapshot_option():
+    error = _reject(_table_config(merge={"snapshot": True, "snapshot_alow_empty": True}))
+
+    assert error.path == "bronze.tables.customer.merge.snapshot_alow_empty"
+    assert "did you mean 'snapshot_allow_empty'?" in error.reason
+
+
+def test_rejects_a_typo_in_a_source_key():
+    error = _reject(_table_config(source={"system": "crm", "object": "account", "objekt": "x"}))
+
+    assert error.path == "bronze.tables.customer.source.objekt"
+    assert "did you mean 'object'?" in error.reason
+
+
+def test_an_unknown_key_without_a_close_match_lists_the_allowed_keys():
+    error = _reject(_table_config(source={"system": "crm", "object": "account", "zzz": 1}))
+
+    assert error.path == "bronze.tables.customer.source.zzz"
+    assert error.reason == "unknown key 'zzz'; allowed keys: object, system"
+
+
+@pytest.mark.parametrize("key", ["name", "layer", "fqn"])
+def test_fields_the_loader_sets_are_not_table_keys(key: str):
+    error = _reject(_table_config(**{key: "x"}))
+
+    assert error.path == f"bronze.tables.customer.{key}"
+
+
+def test_systems_stay_free_form():
+    from pipetree.config.loader import validate_raw
+
+    raw = _table_config()
+    raw["systems"]["crm"].update(landing_path={"secret": "p"}, any_reader_option=1)
+
+    validate_raw(raw)
+
+
+def test_a_config_using_every_table_key_still_loads():
+    from pipetree.config.loader import validate_raw
+    from pipetree.model import PipelineConfig
+
+    raw = _table_config(
+        table_schema="raw",
+        merge={
+            "sequence_by": ["versionnumber"],
+            "delete_when": "isdelete = true",
+            "delete_mode": "soft",
+            "ignore_columns": ["modifiedon"],
+            "snapshot": True,
+            "snapshot_max_missing_ratio": 0.2,
+            "snapshot_allow_empty": False,
+        },
+        depends_on=[],
+        unknown_member=True,
+        schema_policy="fail",
+        surrogate_key="customer_sid",
+        tags=["crm"],
+    )
+    validate_raw(raw)
+
+    table = PipelineConfig.from_validated_raw(raw).tables["raw.customer"]
+    assert table.merge.snapshot_max_missing_ratio == 0.2
+    assert table.tags == ["crm"]
+
+
+def test_the_merge_model_forbids_unknown_keys():
+    from pydantic import ValidationError
+
+    from pipetree.model import Merge
+
+    with pytest.raises(ValidationError):
+        Merge.model_validate({"sequnce_by": ["x"]})
+
+
+# ------------------------------------------------------------ business_key
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+@pytest.mark.parametrize("business_key", [None, []])
+def test_scd1_and_scd2_require_a_business_key(strategy: str, business_key: list[str] | None):
+    raw = _table_config(strategy=strategy)
+    table = raw["bronze"]["tables"]["customer"]
+    if business_key is None:
+        del table["business_key"]
+    else:
+        table["business_key"] = business_key
+
+    error = _reject(raw)
+
+    assert error.path == "bronze.tables.customer.business_key"
+    assert error.reason == "is required for scd1 and scd2"
+
+
+@pytest.mark.parametrize("strategy", ["replace", "append"])
+def test_replace_and_append_need_no_business_key(strategy: str):
+    from pipetree.config.loader import validate_raw
+
+    raw = _table_config(strategy=strategy)
+    del raw["bronze"]["tables"]["customer"]["business_key"]
+
+    validate_raw(raw)
