@@ -17,7 +17,7 @@ The package is `pipetree-meta`. The import and the command are `pipetree`.
 
 | Extra | Adds | Needed for |
 | --- | --- | --- |
-| none | pydantic, pyyaml, click | `validate`, `graph`, loading configs |
+| none | pydantic, pyyaml, click, sqlglot | `validate`, `graph`, loading configs |
 | `spark` | PySpark 4.0, delta-spark 4.0 | `run` on a laptop |
 | `azure` | azure-identity, azure-keyvault-secrets, azure-communication-email | `{secret: ...}` from Key Vault, `auth.mode: aad_token`, the [failure email](../../guides/notifications/) |
 
