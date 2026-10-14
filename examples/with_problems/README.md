@@ -20,7 +20,7 @@ The exit code is 1 on purpose, see problem 4.
 
 | Problem | Where | What pipetree reports |
 | --- | --- | --- |
-| Duplicate rows for one key | `bronze.customer`: account 2 arrives twice in one batch, as versions 2 and 3 | `WARNING` log line, `notes: 2 duplicate row(s) dropped` in the digest, a `⚠` badge on the table. The row with the highest `versionnumber` (the table's `sequence_by`) wins. |
+| Duplicate rows for one key | `bronze.customer`: account 2 arrives three times in one batch, as versions 1, 2 and 3 | `WARNING` log line, `notes: 2 duplicate row(s) dropped` in the digest, a `⚠` badge on the table. The row with the highest `versionnumber` (the table's `sequence_by`) wins. |
 | A NULL business key | `bronze.employee`: one row has no `employee_id` | `WARNING` log line, `notes: 1 NULL-key row(s) dropped`, a `⚠` badge. A row without a key cannot identify anything, so it is not loaded. |
 | Schema drift | `bronze.orders`: the second delivery has a new `channel` column | `notes: schema: added: channel (string)`, a `⚠` badge. With the default `schema_policy: evolve` the column is added to the table. |
 | A failing table | `gold.dim_customer` selects a column (`region`) that does not exist | The table is `failed` with the Spark error in the digest, and `gold.fact_sales`, which reads it, is `upstream_failed` and never starts. The other five tables finish. |
