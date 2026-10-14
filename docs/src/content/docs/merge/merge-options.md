@@ -89,6 +89,7 @@ LEFT JOIN gold.dim_product d
 - Only for scd1 and scd2 with a `business_key`. The name cannot be a key column or a reserved audit column.
 - scd1: a new key gets a new value, an update keeps it. scd2: every new version gets a new value, closing a version never changes one.
 - The unknown member gets `-1`. Values are unique and increasing, with gaps.
-- The source must not have a column with that name.
+- The source must not have a column with that name: leave it out (`SELECT * EXCEPT (product_sk) ...`) or rename it. Downstream tables that `SELECT *` from the dimension carry it as an ordinary column.
+- A second identical run neither renumbers nor duplicates anything. `--init` reloads the rows but keeps the identity high-water mark, so a value is never reused for a different row.
 - It is a Delta identity column: Delta 3.3+ or Databricks Runtime 10.4+. Fabric Runtime 1.3 has no identity columns, so on Fabric `surrogate_key` needs Runtime 2.0. A table created before `surrogate_key` was set has to be dropped and recreated.
 - The [AUTO CDC translation](../../guides/autocdc/) refuses it.
