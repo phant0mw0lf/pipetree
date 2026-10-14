@@ -51,6 +51,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - surrogate_key needs Fabric Runtime 2.0, Fabric as a whole is not unsupported ([#51](https://github.com/phant0mw0lf/pipetree/pull/51))
 - snapshot merge on the start page and in the README, wording and counts fixed ([#53](https://github.com/phant0mw0lf/pipetree/pull/53))
 - GitHub social preview image (1280x640) ([#57](https://github.com/phant0mw0lf/pipetree/pull/57))
+- README images and example links with absolute URLs so PyPI renders them ([#59](https://github.com/phant0mw0lf/pipetree/pull/59))
+- a short README, the long sections move to the documentation site ([#60](https://github.com/phant0mw0lf/pipetree/pull/60))
+- the README quick start creates its source file ([#62](https://github.com/phant0mw0lf/pipetree/pull/62))
 
 ### Features
 
