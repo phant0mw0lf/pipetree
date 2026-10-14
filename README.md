@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/src/assets/logo.svg" alt="pipetree" width="120">
+  <img src="https://raw.githubusercontent.com/phant0mw0lf/pipetree/main/docs/src/assets/logo.svg" alt="pipetree" width="120">
 </p>
 
 # pipetree
@@ -22,7 +22,7 @@ Documentation: https://pipetree.dev
 Running on Databricks and Fabric is described in `examples/databricks/README.md` and
 `examples/fabric/README.md`.
 
-![pipetree's dependency graph after a run: seven tables in four waves, all succeeded](docs/images/graph-clean.png)
+![pipetree's dependency graph after a run: seven tables in four waves, all succeeded](https://raw.githubusercontent.com/phant0mw0lf/pipetree/main/docs/images/graph-clean.png)
 
 ## Prerequisites
 
@@ -69,8 +69,8 @@ A captured transcript of that run, annotated, is in `examples/demo-run.txt`.
 To see what pipetree reports when the data misbehaves (duplicate rows, a
 NULL key, a new column, a failing table), run
 `uv run python examples/with_problems/run.py` - see
-[`examples/with_problems/`](examples/with_problems/README.md). Or open
-[`examples/quickstart.ipynb`](examples/quickstart.ipynb), a notebook with
+[`examples/with_problems/`](https://github.com/phant0mw0lf/pipetree/blob/main/examples/with_problems/README.md). Or open
+[`examples/quickstart.ipynb`](https://github.com/phant0mw0lf/pipetree/blob/main/examples/quickstart.ipynb), a notebook with
 the outputs of both runs.
 
 `uv run pipetree validate --config <path>` checks a config without running
@@ -137,7 +137,7 @@ drift still succeeds, so each of those becomes a *note* on the table:
   of the run in `run_tags`. A `_meta.pipeline_run_log` created before a
   column existed gains it on the next write.
 
-![the graph of a run with notes: three tables carry a warning badge, gold.dim_customer failed and gold.fact_sales is upstream_failed, and the digest lists the notes](docs/images/graph-with-notes.png)
+![the graph of a run with notes: three tables carry a warning badge, gold.dim_customer failed and gold.fact_sales is upstream_failed, and the digest lists the notes](https://raw.githubusercontent.com/phant0mw0lf/pipetree/main/docs/images/graph-with-notes.png)
 
 The run above is `examples/with_problems`: duplicate rows, a NULL key and a
 new column each leave a `⚠` badge and a line in the digest, while one table
