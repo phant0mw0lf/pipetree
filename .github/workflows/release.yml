@@ -124,11 +124,36 @@ jobs:
           name: dist
           path: dist/
 
+      # The notes cover the changes since the previous RELEASE: a final version is compared with the
+      # previous final version (not with a release candidate in between), a pre-release (a, b, rc
+      # after the number, PEP 440) with the tag before it. Only tags that are ancestors count. A pre-release is published as a
+      # pre-release and is never "Latest".
       - name: Generate release notes
-        run: uvx git-cliff --latest --strip header --output RELEASE_NOTES.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          pre='[0-9](a|b|rc)[0-9]+$'
+          others="$(git tag --list 'v[0-9]*' --merged "$TAG" --sort=-creatordate | grep -v -x "$TAG" || true)"
+          if ! printf '%s' "$TAG" | grep -Eq "$pre"; then
+            others="$(printf '%s\n' "$others" | grep -Ev "$pre" || true)"
+          fi
+          prev="$(printf '%s\n' "$others" | sed -n '1p')"
+          if [ -n "$prev" ]; then
+            uvx git-cliff "$prev..$TAG" --strip header --output RELEASE_NOTES.md
+          else
+            uvx git-cliff --latest --strip header --output RELEASE_NOTES.md
+          fi
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file RELEASE_NOTES.md
+        run: |
+          set -eu
+          flags=""
+          if printf '%s' "$TAG" | grep -Eq '[0-9](a|b|rc)[0-9]+$'; then
+            flags="--prerelease --latest=false"
+          fi
+          # shellcheck disable=SC2086 - the flags are two fixed words
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file RELEASE_NOTES.md $flags
