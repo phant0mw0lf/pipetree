@@ -14,12 +14,13 @@ Run 261010132021461: FAILED (exit code 1)
   upstream_failed    gold.fact_sales     attempts=0 0ms
 ```
 
-A **note** records something a merge changed without failing. The table still succeeds. There are four kinds:
+A **note** records something a merge changed without failing. The table still succeeds. There are five kinds:
 
 | Note | When |
 | --- | --- |
 | `n duplicate row(s) dropped` | A batch had several rows for one key. Only the one with the highest `sequence_by` stays. With no `sequence_by` the winner is arbitrary, and the log says so. |
 | `n NULL-key row(s) dropped` | scd1 and scd2 drop rows with a NULL business key. See [Merge options](../../merge/merge-options/#null-business-keys). |
+| `snapshot: n key(s) not in the source were deleted` | A `merge.snapshot` batch did not have these active keys, so they were deleted. See [Snapshot merge](../../merge/snapshot/). |
 | `input not refreshed: <table>` | The table ran while a table it reads did not, in a partial run. See [Tags](../tags/#inputs-that-are-not-refreshed). |
 | `schema: ...` | The source schema differs from the table: added, removed or retyped columns, or changed nullability. What happens depends on `schema_policy`. |
 
@@ -56,5 +57,6 @@ One row per table and run, in `_meta.pipeline_run_log` when the `DeltaRunLogWrit
 | `error_type`, `error_message` | For `failed` |
 | `null_keys_dropped` | Rows dropped for a NULL key |
 | `run_tags` | The tags requested with `--tag` for this run, an empty list when none |
+| `snapshot_deleted` | Keys deleted because a `merge.snapshot` batch did not have them |
 
-A run log written before `null_keys_dropped` or `run_tags` existed gains the column on the next write.
+A run log written before `null_keys_dropped`, `run_tags` or `snapshot_deleted` existed gains the column on the next write.

@@ -1,8 +1,8 @@
 ---
 title: Merge options
-description: sequence_by, delete_when, delete_mode, ignore_columns, init, NULL keys, unknown_member and surrogate_key.
+description: sequence_by, delete_when, delete_mode, ignore_columns, snapshot, init, NULL keys, unknown_member and surrogate_key.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 ```yaml validate
@@ -34,6 +34,9 @@ gold:
 | `delete_when` | Spark SQL expression | True for a delete row. A NULL result is not a delete. |
 | `delete_mode` | `soft` (default), `hard`, `ignore` | `soft`: keep the row, mark `_is_deleted`. `hard`: remove the row (scd1 only). `ignore`: delete rows are dropped from the batch before the dedupe. |
 | `ignore_columns` | list of columns | Changes in only these columns update in place: no scd2 version, no `_execution_id` bump. |
+| `snapshot` | `true`, `false` (default) | The batch is the complete current state of the source. An active key that is not in the batch is deleted like a delete row, following `delete_mode`. See [Snapshot merge](../snapshot/). |
+| `snapshot_max_missing_ratio` | number from 0 to 1, default `0.5` | With `snapshot`: the table fails before anything is written when more than this share of its active keys is missing. |
+| `snapshot_allow_empty` | `true`, `false` (default) | With `snapshot`: an empty batch fails the table unless this is `true`. |
 
 The effects per strategy are on the [scd1](../scd1/) and [scd2](../scd2/) pages.
 
@@ -87,5 +90,5 @@ LEFT JOIN gold.dim_product d
 - scd1: a new key gets a new value, an update keeps it. scd2: every new version gets a new value, closing a version never changes one.
 - The unknown member gets `-1`. Values are unique and increasing, with gaps.
 - The source must not have a column with that name.
-- It is a Delta identity column: Delta 3.3+ or Databricks Runtime 10.4+. Fabric Runtime 1.3 has no identity columns, so `surrogate_key` is unsupported there. A table created before `surrogate_key` was set has to be dropped and recreated.
+- It is a Delta identity column: Delta 3.3+ or Databricks Runtime 10.4+. Fabric Runtime 1.3 has no identity columns, so on Fabric `surrogate_key` needs Runtime 2.0. A table created before `surrogate_key` was set has to be dropped and recreated.
 - The [AUTO CDC translation](../../guides/autocdc/) refuses it.

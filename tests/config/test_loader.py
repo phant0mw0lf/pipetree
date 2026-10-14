@@ -271,3 +271,60 @@ def test_rejects_invalid_surrogate_key(overrides, reason):
 
     assert "gold.tables.dim_product.surrogate_key" in str(exc_info.value)
     assert reason in str(exc_info.value)
+
+
+def test_accepts_snapshot_with_its_options_on_scd2(tmp_path: Path):
+    config = (
+        MINIMAL_VALID
+        + """
+      merge:
+        snapshot: true
+        snapshot_max_missing_ratio: 0.2
+        snapshot_allow_empty: true
+"""
+    )
+
+    raw = load_config(write_config(tmp_path, config))
+
+    merge = raw["bronze"]["tables"]["customer"]["merge"]
+    assert merge["snapshot"] is True and merge["snapshot_max_missing_ratio"] == 0.2
+
+
+def test_rejects_snapshot_on_replace(tmp_path: Path):
+    config = MINIMAL_VALID.replace("strategy: scd2", "strategy: replace") + (
+        """
+      merge:
+        snapshot: true
+"""
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(write_config(tmp_path, config))
+
+    assert exc_info.value.path == "bronze.tables.customer.merge.snapshot"
+    assert "scd1 and scd2" in exc_info.value.reason
+
+
+@pytest.mark.parametrize("key", ["snapshot_max_missing_ratio", "snapshot_allow_empty"])
+def test_snapshot_options_need_snapshot_true(tmp_path: Path, key: str):
+    value = "0.3" if key == "snapshot_max_missing_ratio" else "true"
+    config = MINIMAL_VALID + f"\n      merge:\n        {key}: {value}\n"
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(write_config(tmp_path, config))
+
+    assert exc_info.value.path == f"bronze.tables.customer.merge.{key}"
+    assert "snapshot: true" in exc_info.value.reason
+
+
+@pytest.mark.parametrize("ratio", ["1.5", "-0.1", "high", "true"])
+def test_rejects_a_snapshot_ratio_outside_0_to_1(tmp_path: Path, ratio: str):
+    config = (
+        MINIMAL_VALID
+        + f"\n      merge:\n        snapshot: true\n        snapshot_max_missing_ratio: {ratio}\n"
+    )
+
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(write_config(tmp_path, config))
+
+    assert exc_info.value.path == "bronze.tables.customer.merge.snapshot_max_missing_ratio"

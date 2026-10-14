@@ -138,3 +138,31 @@ def test_table_rejects_scd2_with_hard_delete():
             business_key=["id"],
             merge=Merge(delete_mode="hard"),
         )
+
+
+def test_table_rejects_snapshot_on_replace_and_append():
+    import pytest
+
+    from pipetree.model import Merge, Table
+
+    for strategy in ("replace", "append"):
+        with pytest.raises(ValueError, match="snapshot is only available for the scd1 and scd2"):
+            Table(
+                name="t",
+                layer="silver",
+                table_schema="silver",
+                fqn="silver.t",
+                strategy=strategy,
+                merge=Merge(snapshot=True),
+            )
+
+
+def test_merge_snapshot_defaults_and_ratio_bounds():
+    import pytest
+
+    from pipetree.model import Merge
+
+    m = Merge()
+    assert (m.snapshot, m.snapshot_max_missing_ratio, m.snapshot_allow_empty) == (False, 0.5, False)
+    with pytest.raises(ValueError):
+        Merge(snapshot=True, snapshot_max_missing_ratio=1.5)

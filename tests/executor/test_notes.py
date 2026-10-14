@@ -11,17 +11,22 @@ def test_nothing_to_note_gives_an_empty_list():
 def test_zero_counts_and_empty_changes_produce_nothing():
     assert notes_for({"duplicates_dropped": 0, "null_keys_dropped": 0, "schema_changes": []}) == []
     assert notes_for({"duplicates_dropped": None, "schema_changes": None}) == []
+    assert notes_for({"snapshot_deleted": 0}) == []
 
 
 def test_each_kind_has_its_own_wording():
     assert notes_for({"duplicates_dropped": 3}) == ["3 duplicate row(s) dropped"]
     assert notes_for({"null_keys_dropped": 2}) == ["2 NULL-key row(s) dropped"]
+    assert notes_for({"snapshot_deleted": 5}) == [
+        "snapshot: 5 key(s) not in the source were deleted"
+    ]
     assert notes_for({"schema_changes": ["added: email"]}) == ["schema: added: email"]
 
 
-def test_order_is_duplicates_then_null_keys_then_each_schema_change():
+def test_order_is_duplicates_then_null_keys_then_snapshot_then_each_schema_change():
     details = {
         "schema_changes": ["added: a", "widened: b"],
+        "snapshot_deleted": 2,
         "null_keys_dropped": 1,
         "duplicates_dropped": 4,
     }
@@ -29,6 +34,7 @@ def test_order_is_duplicates_then_null_keys_then_each_schema_change():
     assert notes_for(details) == [
         "4 duplicate row(s) dropped",
         "1 NULL-key row(s) dropped",
+        "snapshot: 2 key(s) not in the source were deleted",
         "schema: added: a",
         "schema: widened: b",
     ]

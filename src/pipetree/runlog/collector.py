@@ -44,4 +44,5 @@ def _row_for(fqn: str, digest: RunDigest, graph: Graph, run_tags: list[str]) -> 
         "error_message": result.error_message,
         "null_keys_dropped": details.get("null_keys_dropped"),
         "run_tags": run_tags,
+        "snapshot_deleted": details.get("snapshot_deleted"),
     }

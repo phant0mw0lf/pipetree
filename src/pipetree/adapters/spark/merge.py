@@ -68,6 +68,12 @@ class SurrogateKeyError(RuntimeError):
     or the engine doesn't support Delta identity columns at all."""
 
 
+class SnapshotGuardError(RuntimeError):
+    """A `merge.snapshot` batch misses more of the table's active keys than
+    `merge.snapshot_max_missing_ratio` allows, or is empty without
+    `merge.snapshot_allow_empty`. Raised before anything is written."""
+
+
 def strip_reserved_columns(source: DataFrame, table: Table) -> DataFrame:
     """Drop pipetree's reserved audit columns from an incoming source.
 
@@ -160,7 +166,12 @@ def merge_scd1(
         stamped = _with_values(seed, insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
         _write_seed(spark, table, stamped)
-        return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+        # A first load or a full reload has nothing to snapshot-delete.
+        return {
+            "rows_written": row_count,
+            "duplicates_dropped": duplicates_dropped,
+            "snapshot_deleted": 0,
+        }
 
     _require_identity_column(spark, table)
     reconciliation = _reconcile_schema(spark, table, deduped)
@@ -168,6 +179,8 @@ def merge_scd1(
         deduped = deduped.select(*reconciliation.columns)
     columns = reconciliation.columns
     prepared = _prepare_source(deduped, table)
+    # Checked (and possibly raised) before anything is written.
+    snapshot_deleted = _snapshot_missing(spark, table, prepared)[1]
 
     key_cond = _key_condition(table)
     change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
@@ -221,14 +234,33 @@ def merge_scd1(
         # Only ignored columns changed (ignore_columns alone update in place): written in place,
         # audit untouched.
         merge_builder = merge_builder.whenMatchedUpdate(condition=in_place[0], set=in_place[1])
+    if snapshot_deleted:
+        # merge.snapshot: an active key the batch does not have is deleted like a delete row,
+        # without a sequence (it applies to the current state); the stored sequence stays.
+        missing = _snapshot_active_condition(spark, table, prefix="target.")
+        if table.merge.delete_mode == "hard":
+            merge_builder = merge_builder.whenNotMatchedBySourceDelete(condition=missing)
+        else:
+            merge_builder = merge_builder.whenNotMatchedBySourceUpdate(
+                condition=missing,
+                set={
+                    **update_audit_values(execution_id, source_system, now),
+                    "_is_deleted": F.lit(True),
+                },
+            )
     final_builder = merge_builder.whenNotMatchedInsert(
         condition=f"source.{_IS_DELETE_COL} = false", values=insert_values
     )
     if reconciliation.needs_schema_evolution:
         final_builder = final_builder.withSchemaEvolution()
     final_builder.execute()
+    _log_snapshot_deleted(table, snapshot_deleted)
 
-    result: dict[str, Any] = {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    result: dict[str, Any] = {
+        "rows_written": row_count,
+        "duplicates_dropped": duplicates_dropped,
+        "snapshot_deleted": snapshot_deleted,
+    }
     if reconciliation.changes:
         result["schema_changes"] = [str(change) for change in reconciliation.changes]
     return result
@@ -255,7 +287,12 @@ def merge_scd2(
         stamped = _with_values(seed, scd2_insert_audit_values(execution_id, source_system, now))
         row_count = stamped.count()
         _write_seed(spark, table, stamped)
-        return {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+        # A first load or a full reload has nothing to snapshot-delete.
+        return {
+            "rows_written": row_count,
+            "duplicates_dropped": duplicates_dropped,
+            "snapshot_deleted": 0,
+        }
 
     _require_identity_column(spark, table)
     reconciliation = _reconcile_schema(spark, table, deduped)
@@ -263,6 +300,9 @@ def merge_scd2(
         deduped = deduped.select(*reconciliation.columns)
     columns = reconciliation.columns
     prepared = _prepare_source(deduped, table)
+    # Checked (and possibly raised) before anything is written. Taken from the whole batch: a key
+    # that only has a late row below is present, not missing.
+    missing_keys, snapshot_deleted = _snapshot_missing(spark, table, prepared)
 
     # sequence_by: a row older than its key's latest version is a late arrival. It never goes
     # through the close/open merge below; it is ignored (delete row), a no-op, or inserted as an
@@ -302,10 +342,15 @@ def merge_scd2(
     )
 
     row_count = prepared.count()
+    merge_source = prepared
+    if missing_keys is not None and snapshot_deleted:
+        # merge.snapshot: a missing key is merged as a delete row for it (no sequence: the scd2
+        # delete close below never compares one), so its current version is closed and deleted.
+        merge_source = prepared.unionByName(_as_delete_rows(missing_keys, prepared, table))
     delta_table = DeltaTable.forName(spark, table.fqn)
     merge_builder = (
         delta_table.alias("target")
-        .merge(prepared.alias("source"), key_cond)
+        .merge(merge_source.alias("source"), key_cond)
         .whenMatchedUpdate(condition=f"source.{_IS_DELETE_COL} = true", set=close_for_delete)
         .whenMatchedUpdate(
             condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=close_for_change
@@ -345,11 +390,101 @@ def merge_scd2(
         now,
         reconciliation.needs_schema_evolution,
     )
+    _log_snapshot_deleted(table, snapshot_deleted)
 
-    result: dict[str, Any] = {"rows_written": row_count, "duplicates_dropped": duplicates_dropped}
+    result: dict[str, Any] = {
+        "rows_written": row_count,
+        "duplicates_dropped": duplicates_dropped,
+        "snapshot_deleted": snapshot_deleted,
+    }
     if reconciliation.changes:
         result["schema_changes"] = [str(change) for change in reconciliation.changes]
     return result
+
+
+def _snapshot_active_condition(spark: SparkSession, table: Table, prefix: str = "") -> Column:
+    """The table's active rows for `merge.snapshot`: scd1 not deleted, scd2 the current version
+    that is not deleted. Never the unknown member. `prefix` qualifies the columns (`target.`)."""
+    active = F.col(f"{prefix}_is_deleted") == F.lit(False)
+    if table.strategy == "scd2":
+        active = active & (F.col(f"{prefix}_is_current") == F.lit(True))
+    if table.unknown_member:
+        schema = spark.table(table.fqn).schema
+        sentinels = {
+            k: unknown_member_key(schema[k].dataType, table.fqn) for k in table.business_key
+        }
+        active = active & ~_is_unknown_member(table, schema, sentinels, prefix)
+    return active
+
+
+def _snapshot_missing(
+    spark: SparkSession, table: Table, prepared: DataFrame
+) -> tuple[DataFrame | None, int]:
+    """`merge.snapshot` against an existing table: the active keys the batch (one row per key,
+    delete rows included) does not have, and how many. Raises `SnapshotGuardError` when the
+    batch is empty without `snapshot_allow_empty` or misses more than
+    `snapshot_max_missing_ratio` of the active keys. `(None, 0)` when snapshot is off, with
+    `delete_mode: ignore` (missing keys stay active, no guard) or without any active key."""
+    if not table.merge.snapshot or table.merge.delete_mode == "ignore":
+        return None, 0
+    keys = list(table.business_key)
+    active = spark.table(table.fqn).filter(_snapshot_active_condition(spark, table)).select(*keys)
+    active_count = active.count()
+    if active_count == 0:
+        return None, 0
+    batch_keys = prepared.select(*keys).alias("b")
+    missing = (
+        active.alias("a")
+        .join(
+            batch_keys,
+            reduce(operator.and_, [F.col(f"a.{k}").eqNullSafe(F.col(f"b.{k}")) for k in keys]),
+            "left_anti",
+        )
+        .select(*[F.col(f"a.{k}").alias(k) for k in keys])
+    )
+    missing_count = missing.count()
+    if not table.merge.snapshot_allow_empty and prepared.limit(1).count() == 0:
+        raise SnapshotGuardError(
+            f"{table.fqn}: snapshot guard: the batch is empty, so all {active_count} active "
+            f"key(s) are missing ({missing_count} of {active_count}, ratio 1). Nothing was "
+            "written. If an empty source really means every key is gone, set "
+            "merge.snapshot_allow_empty: true (merge.snapshot_max_missing_ratio still applies)."
+        )
+    ratio = missing_count / active_count
+    limit = table.merge.snapshot_max_missing_ratio
+    if ratio > limit:
+        raise SnapshotGuardError(
+            f"{table.fqn}: snapshot guard: {missing_count} of {active_count} active key(s) are "
+            f"missing from the batch (ratio {ratio:.4g}), more than "
+            f"merge.snapshot_max_missing_ratio = {limit:g}. Nothing was written. If the keys "
+            "really are gone, raise merge.snapshot_max_missing_ratio."
+        )
+    return missing, missing_count
+
+
+def _as_delete_rows(keys: DataFrame, like: DataFrame, table: Table) -> DataFrame:
+    """One delete row per key of `keys`, shaped like the prepared batch `like`: the key, NULL
+    everywhere else, the delete marker set."""
+    schema = like.schema
+
+    def value(c: str) -> Column:
+        if c in table.business_key:
+            return F.col(c).cast(schema[c].dataType)
+        if c == _IS_DELETE_COL:
+            return F.lit(True)
+        return F.lit(None).cast(schema[c].dataType)
+
+    return keys.select(*[value(c).alias(c) for c in like.columns])
+
+
+def _log_snapshot_deleted(table: Table, snapshot_deleted: int) -> None:
+    if snapshot_deleted:
+        _logger.warning(
+            "%s: snapshot: %d key(s) not in the source were deleted (delete_mode: %s)",
+            table.fqn,
+            snapshot_deleted,
+            table.merge.delete_mode,
+        )
 
 
 def _plan_late_versions(
@@ -579,11 +714,17 @@ def drop_null_business_keys(source: DataFrame, table: Table) -> tuple[DataFrame,
     return source.filter(~drop), dropped
 
 
-def _is_unknown_member(table: Table, schema: StructType, sentinels: dict[str, Any]) -> Column:
-    """Null-safe "is this row the unknown member?" across every key column."""
+def _is_unknown_member(
+    table: Table, schema: StructType, sentinels: dict[str, Any], prefix: str = ""
+) -> Column:
+    """Null-safe "is this row the unknown member?" across every key column. `prefix` qualifies
+    the columns (`target.` inside a merge condition)."""
     current = reduce(
         operator.and_,
-        [F.col(k).eqNullSafe(F.lit(v).cast(schema[k].dataType)) for k, v in sentinels.items()],
+        [
+            F.col(f"{prefix}{k}").eqNullSafe(F.lit(v).cast(schema[k].dataType))
+            for k, v in sentinels.items()
+        ],
     )
     first, *rest = table.business_key
     if not rest or not isinstance(schema[first].dataType, NumericType):
@@ -592,8 +733,8 @@ def _is_unknown_member(table: Table, schema: StructType, sentinels: dict[str, An
     # column and NULL in the rest - still the unknown member after upgrade.
     legacy = reduce(
         operator.and_,
-        [F.col(first).eqNullSafe(F.lit(-1).cast(schema[first].dataType))]
-        + [F.col(k).isNull() for k in rest],
+        [F.col(f"{prefix}{first}").eqNullSafe(F.lit(-1).cast(schema[first].dataType))]
+        + [F.col(f"{prefix}{k}").isNull() for k in rest],
     )
     return current | legacy
 
@@ -674,9 +815,8 @@ def _create_identity_table(spark: SparkSession, table: Table, schema: StructType
     raise SurrogateKeyError(
         f"{table.fqn}: surrogate_key {sk!r} needs Delta identity columns (GENERATED BY "
         "DEFAULT AS IDENTITY), which this engine does not support - it needs Delta Lake "
-        "3.3+ (OSS delta-spark, e.g. 4.0) or Databricks Runtime 10.4+; Fabric Runtime 1.3 "
-        "(Delta 3.2) does not have them, and Microsoft's Fabric Delta-interoperability "
-        "page lists identity-column writes as unsupported in Fabric. Underlying "
+        "3.3+ (OSS delta-spark, e.g. 4.0), Databricks Runtime 10.4+ or Fabric Runtime 2.0; "
+        "Fabric Runtime 1.3 (Delta 3.2) does not have them. Underlying "
         "errors: " + " | ".join(errors)
     )
 
