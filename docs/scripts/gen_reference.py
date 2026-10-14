@@ -14,6 +14,7 @@ compares it with the committed files.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -296,7 +297,9 @@ def render_cli() -> str:
             "",
             f"## pipetree {name}",
             "",
-            (cmd.help or "").strip(),
+            # cleandoc: Python 3.13 dedents docstrings at compile time, 3.12 does not;
+            # this gives the same text on every version
+            inspect.cleandoc(cmd.help or ""),
             "",
             "```text",
             usage,

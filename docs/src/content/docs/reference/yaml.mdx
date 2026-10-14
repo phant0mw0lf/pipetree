@@ -92,3 +92,6 @@ Under a table's `merge`. See [Merge options](../../merge/merge-options/).
 | `delete_when` | string \| null | `null` | Spark SQL expression, true for source rows that are deletes. |
 | `delete_mode` | "soft" \| "hard" \| "ignore" | `"soft"` | What a delete row does: soft marks the row deleted, hard removes it (scd1 only), ignore drops delete rows from the batch. |
 | `ignore_columns` | list[string] | `[]` | Columns whose changes alone are written in place: no new scd2 version and no audit column update. |
+| `snapshot` | boolean | `false` | The batch is the complete current state of the source (scd1 and scd2 only). An active key of the table that is not in the batch is handled like a delete row, following delete_mode. |
+| `snapshot_max_missing_ratio` | number | `0.5` | With snapshot: the table fails and nothing is written when more than this share of its active keys is missing from the batch. |
+| `snapshot_allow_empty` | boolean | `false` | With snapshot: an empty batch is an error unless this is true (then every active key counts as missing, subject to snapshot_max_missing_ratio). |

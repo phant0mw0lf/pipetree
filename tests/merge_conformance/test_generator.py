@@ -19,6 +19,7 @@ TYPE_OPTION_NAMES = {
     "composite_sequence_mixed_types",
     "sequence_nan",
 }
+SNAPSHOT_NAMES = {"snapshot_missing_key", "snapshot_return"}
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES)
@@ -65,6 +66,13 @@ def _check_valid(case: Case, strategy: str) -> None:
                 assert row[c] is None or type(row[c]) is py, (case.repr_line(), c, row[c])
                 # NaN only where the case types the column double (the model compares it like Spark)
                 assert row[c] is None or row[c] == row[c] or case.column_types.get(c) == "double"
+    if t.snapshot:
+        assert t.strategy in ("scd1", "scd2")
+        assert t.snapshot_max_missing_ratio == 1.0 and t.snapshot_allow_empty
+        for batch in case.batches:  # a snapshot batch always carries at least one real key
+            assert any(all(r[c] is not None for c in t.key) for r in batch), case.repr_line()
+    else:
+        assert t.snapshot_max_missing_ratio == 0.5 and not t.snapshot_allow_empty
     assert 2 <= len(case.batches) <= 6
     assert all(0 <= i < len(case.batches) for i in case.inits)
     keys_seen = set()
@@ -140,7 +148,37 @@ def test_coverage_names_are_the_documented_ones():
         "surrogate_key_without_unknown_member",
         "composite_sequence_mixed_types",
         "sequence_nan",
+        "snapshot_missing_key",
+        "snapshot_return",
     }
+
+
+def test_snapshot_cases_are_a_share_of_scd_cases_only():
+    for strategy in ("replace", "append"):
+        assert not any(generate_case(s, strategy).table.snapshot for s in range(100))
+    for strategy in ("scd1", "scd2"):
+        cases = [generate_case(s, strategy) for s in range(200)]
+        share = sum(c.table.snapshot for c in cases) / len(cases)
+        assert 0.2 < share < 0.5, (strategy, share)
+        modes = {c.table.delete_mode for c in cases if c.table.snapshot and c.table.has_delete}
+        assert "ignore" in modes and "soft" in modes
+        assert any(c.table.snapshot and c.table.unknown_member for c in cases)
+
+
+def test_snapshot_batches_are_subsets_of_one_key_universe_and_vary():
+    sizes: set[int] = set()
+    for seed in range(100):
+        case = generate_case(seed, "scd1")
+        t = case.table
+        if not t.snapshot:
+            continue
+        keysets = [
+            frozenset(tuple(r[c] for c in t.key) for r in b if all(r[c] is not None for c in t.key))
+            for b in case.batches
+        ]
+        sizes |= {len(k) for k in keysets}
+        assert len(frozenset().union(*keysets)) <= 8
+    assert len(sizes) > 2
 
 
 def test_coverage_detects_each_property_on_hand_built_cases():
@@ -176,7 +214,7 @@ def test_coverage_detects_each_property_on_hand_built_cases():
         batches=batches,
         inits=frozenset({5}),
     )
-    assert coverage(case) == set(COVERAGE_NAMES) - TYPE_OPTION_NAMES
+    assert coverage(case) == set(COVERAGE_NAMES) - TYPE_OPTION_NAMES - SNAPSHOT_NAMES
 
     # The type options are detected too.
     typed = Case(
@@ -233,3 +271,42 @@ def test_every_typed_sequence_value_is_a_python_value_of_its_column_type():
             case = generate_case(seed, strategy)
             seen |= set(case.column_types.values())
     assert seen == {"timestamp", "string", "decimal(10,2)", "double"}
+
+
+def test_coverage_detects_snapshot_missing_key_and_return():
+    from dataclasses import replace
+
+    from pipetree.testing.merge_model import ModelTable
+
+    t = ModelTable(
+        strategy="scd1",
+        key=("id",),
+        columns=("id", "v", "w", "seq", "op"),
+        snapshot=True,
+        snapshot_max_missing_ratio=1.0,
+        snapshot_allow_empty=True,
+    )
+
+    def r(i):
+        return {"id": i, "v": "x", "w": None, "seq": None, "op": "U"}
+
+    def case(batches, table=t):
+        return Case(
+            seed=-1,
+            table=table,
+            delete_when=None,
+            surrogate_key=None,
+            batches=batches,
+            inits=frozenset(),
+        )
+
+    only_missing = coverage(case([[r(1), r(2)], [r(2)]]))
+    assert {"snapshot_missing_key", "snapshot_return"} & only_missing == {"snapshot_missing_key"}
+    both = coverage(case([[r(1), r(2)], [r(2)], [r(1), r(2)]]))
+    assert both >= SNAPSHOT_NAMES
+    # a table without snapshot, or in ignore mode, never reports them
+    assert not SNAPSHOT_NAMES & coverage(
+        case([[r(1), r(2)], [r(2)], [r(1), r(2)]], replace(t, snapshot=False))
+    )
+    ign = replace(t, has_delete=True, delete_mode="ignore")
+    assert not SNAPSHOT_NAMES & coverage(case([[r(1), r(2)], [r(2)], [r(1), r(2)]], ign))
