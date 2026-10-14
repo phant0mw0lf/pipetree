@@ -117,6 +117,7 @@
       ]
     },
     "Merge": {
+      "additionalProperties": false,
       "properties": {
         "sequence_by": {
           "description": "Source columns that order the versions of a key. The highest value wins.",
@@ -217,6 +218,7 @@
       "type": "object"
     },
     "Source": {
+      "additionalProperties": false,
       "properties": {
         "system": {
           "description": "Name of a system declared under `systems`.",
@@ -253,6 +255,7 @@
       "type": "object"
     },
     "Table": {
+      "additionalProperties": false,
       "properties": {
         "table_schema": {
           "description": "Schema the table is created in. Defaults to the layer name.",

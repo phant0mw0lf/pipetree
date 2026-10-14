@@ -254,12 +254,14 @@ def _option_rows(cmd: click.Command) -> list[str]:
                 else param.type.name.upper()
             )
             names += " `" + metavar.replace("|", "\\|") + "`"
+        # to_info_dict maps click's internal UNSET sentinel (no default) to None
+        param_default = param.to_info_dict()["default"]
         if param.required:
             default = "required"
-        elif param.is_flag or param.default is None:
+        elif param.is_flag or param_default is None:
             default = "-" if not param.is_flag else "off"
         else:
-            default = f"`{param.default}`"
+            default = f"`{param_default}`"
         help_text = _escape((param.help or "").replace("\n", " "))
         rows.append(f"| {names} | {default} | {help_text} |")
     return rows
