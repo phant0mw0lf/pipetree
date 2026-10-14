@@ -183,9 +183,11 @@ version in `pyproject.toml` and `__version__` must be the same PEP 440 string
 notes cover the changes since the tag before it, the notes of the final version those
 since the previous final version.
 
-**Immutable releases** are enabled for the repository: a published GitHub Release can
-no longer be changed or deleted, and neither can its tag. PyPI files are immutable
-anyway. A mistake is fixed with a new version (`X.Y.Z+1`).
+**Immutable releases** are enabled for the repository: once a GitHub Release is
+published, its assets and its tag can no longer be changed, and the release cannot be
+deleted. Its title and notes stay editable (`gh release edit vX.Y.Z --notes-file ...`).
+PyPI files are immutable anyway. A mistake in the files is fixed with a new version
+(`X.Y.Z+1`).
 
 ### One-time setup checklist
 
