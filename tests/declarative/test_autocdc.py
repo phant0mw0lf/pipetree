@@ -199,6 +199,13 @@ def test_refuses_a_surrogate_key_rather_than_silently_dropping_it():
         translate_table(table, source="bronze_raw.customer")
 
 
+def test_refuses_a_snapshot_merge_rather_than_never_deleting_missing_keys():
+    table = make_table("scd2", merge={"snapshot": True})
+
+    with pytest.raises(ValueError, match="snapshot"):
+        translate_table(table, source="bronze_raw.customer")
+
+
 def test_render_sql_scd1_exact_output():
     flow = make_flow(
         keys=["accountid"],

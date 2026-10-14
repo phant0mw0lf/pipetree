@@ -71,6 +71,12 @@ def translate_table(table: Table, *, source: str) -> AutoCdcFlow:
             "surrogate key downstream of the flow instead"
         )
 
+    if table.merge.snapshot:
+        raise ValueError(
+            f"{table.fqn}: merge.snapshot has no AUTO CDC translation - the flow would never "
+            "delete keys missing from the batch; run the table with pipetree instead"
+        )
+
     delete_when = table.merge.delete_when if table.merge.delete_mode != "ignore" else None
 
     return AutoCdcFlow(

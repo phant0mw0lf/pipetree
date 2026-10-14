@@ -40,7 +40,7 @@ It is a translation, not an executor. AUTO CDC runs only inside a Lakeflow Decla
 | `strategy: scd1` / `scd2` | `STORED AS SCD TYPE 1` / `2` |
 | `ignore_columns` (scd2) | `TRACK HISTORY ON * EXCEPT (...)` |
 
-Only scd1 and scd2 translate. `replace` and `append` raise an error: a plain streaming table or materialized view does the job. A table with no `business_key`, or with `surrogate_key`, is refused.
+Only scd1 and scd2 translate. `replace` and `append` raise an error: a plain streaming table or materialized view does the job. A table with no `business_key`, or with `surrogate_key`, is refused. So is `merge.snapshot: true`: the flow would never delete keys missing from the batch.
 
 ## Differences
 
