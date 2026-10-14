@@ -42,8 +42,8 @@ pipetree graph [OPTIONS]
 | `--config` `FILE` | required | Path to the pipeline YAML config. |
 | `--format` `text\|mermaid\|html` | `text` | html: one self-contained page (inline CSS + SVG) with the tree laid out in waves - redirect it to a file and open it in a browser. |
 | `--select` `TEXT` | - | Comma-separated table names to run (fqn or unambiguous bare name). Everything else is left alone. |
-| `--tag` `TEXT` | `Sentinel.UNSET` | Run only tables carrying this tag. Repeat for several: a table needs at least one. Intersects with --select; --with-dependents and --with-ancestors extend the result. |
-| `--exclude-tag` `TEXT` | `Sentinel.UNSET` | Never run tables carrying this tag, even when --with-dependents or --with-ancestors pulls them in. Repeatable. |
+| `--tag` `TEXT` | - | Run only tables carrying this tag. Repeat for several: a table needs at least one. Intersects with --select; --with-dependents and --with-ancestors extend the result. |
+| `--exclude-tag` `TEXT` | - | Never run tables carrying this tag, even when --with-dependents or --with-ancestors pulls them in. Repeatable. |
 | `--with-dependents` | off | Extend the selection to every table downstream of it (the CI/CD subtree mode). |
 | `--with-ancestors` | off | Extend the selection to every table upstream of it (what it transitively reads). |
 
@@ -60,8 +60,8 @@ pipetree run [OPTIONS]
 | `--config` `FILE` | required | Path to the pipeline YAML config. |
 | `--max-workers` `INTEGER` | `4` | Maximum number of tables running at the same time. |
 | `--select` `TEXT` | - | Comma-separated table names to run (fqn or unambiguous bare name). Everything else is left alone. |
-| `--tag` `TEXT` | `Sentinel.UNSET` | Run only tables carrying this tag. Repeat for several: a table needs at least one. Intersects with --select; --with-dependents and --with-ancestors extend the result. |
-| `--exclude-tag` `TEXT` | `Sentinel.UNSET` | Never run tables carrying this tag, even when --with-dependents or --with-ancestors pulls them in. Repeatable. |
+| `--tag` `TEXT` | - | Run only tables carrying this tag. Repeat for several: a table needs at least one. Intersects with --select; --with-dependents and --with-ancestors extend the result. |
+| `--exclude-tag` `TEXT` | - | Never run tables carrying this tag, even when --with-dependents or --with-ancestors pulls them in. Repeatable. |
 | `--with-dependents` | off | Extend the selection to every table downstream of it (the CI/CD subtree mode). |
 | `--with-ancestors` | off | Extend the selection to every table upstream of it (what it transitively reads). |
 | `--init` | off | Full reload: treat every run table as if seeding fresh. |

@@ -43,3 +43,10 @@ def test_every_model_field_has_a_description(generator: ModuleType):
     for model, definition in schema["$defs"].items():
         for name, prop in definition.get("properties", {}).items():
             assert prop.get("description"), f"{model}.{name} has no description"
+
+
+def test_cli_reference_prints_no_click_sentinel(generator: ModuleType):
+    cli = generator.render_all()["cli"]
+
+    assert "Sentinel" not in cli
+    assert "| `--tag` `TEXT` | - |" in cli
