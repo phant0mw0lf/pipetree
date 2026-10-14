@@ -63,6 +63,7 @@ bronze:
 ```
 
 ```bash
+mkdir -p data && printf 'accountid,name\n1,Contoso\n2,Fabrikam\n' > data/customer.csv   # a tiny source file
 pipetree validate --config pipeline.yaml   # check the config, nothing runs
 pipetree graph --config pipeline.yaml      # print the dependency tree
 pipetree run --config pipeline.yaml        # run it and print a digest
