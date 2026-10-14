@@ -15,7 +15,7 @@ Same pipeline as the quickstart, two runs. Run 1 loads clean data. Run 2 loads a
 
 | Problem | Table | Note |
 | --- | --- | --- |
-| Account 2 arrives twice in one batch | `bronze.customer` | `2 duplicate row(s) dropped`. The row with the highest `sequence_by` wins. |
+| Account 2 arrives three times in one batch (versions 1, 2 and 3) | `bronze.customer` | `2 duplicate row(s) dropped`. The row with the highest `sequence_by` wins. |
 | A row without `employee_id` | `bronze.employee` | `1 NULL-key row(s) dropped` |
 | A new `channel` column | `bronze.orders` | `schema: added: channel (string)`. With `schema_policy: evolve` the column is added. |
 | A column that does not exist | `gold.dim_customer` | `failed`. `gold.fact_sales` is `upstream_failed`. |

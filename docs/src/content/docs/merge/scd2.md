@@ -40,7 +40,7 @@ Rules:
 - **Late versions have an empty validity interval.** `_valid_from` and `_valid_to` are processing times, and a late version was never valid in processing time. It shows in the history but a point-in-time query never returns it.
 - **Unchanged row**: no new version. Same batch twice: no change.
 - **`ignore_columns`**: if only those columns changed, the current version is updated in place, no new version.
-- **Deletes**: `soft` closes the current version and marks it deleted. A returning key opens a new version. `hard` is rejected for scd2 when the config is loaded, because it would destroy history. `ignore` drops delete rows.
+- **Deletes**: `soft` closes the current version and marks it deleted. A returning key opens a new version. `hard` is rejected for scd2 when the config is loaded, because it would destroy history. `ignore` drops delete rows. With `merge.snapshot: true`, a key missing from the batch is deleted as well, see [Snapshot merge](../snapshot/).
 - **NULL keys** and duplicates in a batch behave as in [scd1](../scd1/).
 - **Limit**: the sequence of a delete row is not stored. After a delete, a row with a sequence at or above the deleted version's reopens the key, even if the delete was newer.
 

@@ -19,7 +19,7 @@ A **note** records something a merge changed without failing. The table still su
 | Note | When |
 | --- | --- |
 | `n duplicate row(s) dropped` | A batch had several rows for one key. Only the one with the highest `sequence_by` stays. With no `sequence_by` the winner is arbitrary, and the log says so. |
-| `n NULL-key row(s) dropped` | scd1 and scd2 drop rows with a NULL business key. See [Merge options](../../merge/merge-options/#null-business-keys). |
+| `n NULL-key row(s) dropped` | scd1 and scd2, and a table with `unknown_member` of any strategy, drop rows with a NULL business key. See [Merge options](../../merge/merge-options/#null-business-keys). |
 | `snapshot: n key(s) not in the source were deleted` | A `merge.snapshot` batch did not have these active keys, so they were deleted. See [Snapshot merge](../../merge/snapshot/). |
 | `input not refreshed: <table>` | The table ran while a table it reads did not, in a partial run. See [Tags](../tags/#inputs-that-are-not-refreshed). |
 | `schema: ...` | The source schema differs from the table: added, removed or retyped columns, or changed nullability. What happens depends on `schema_policy`. |
