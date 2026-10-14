@@ -38,6 +38,18 @@ version) and shows up in the history order only; a point-in-time query never ret
 limit: a delete row's own sequence is not stored, so after a delete a row with a sequence >= the
 deleted version's reopens the key even if the delete was newer. replace and append keep arrival
 order (the last batch wins).
+
+``snapshot`` (scd1/scd2 only): the prepared, deduped batch is the COMPLETE current state of the
+source. A = the active keys before the batch (scd1: rows not deleted; scd2: keys whose current
+version is not deleted; the unknown member never counts), K = the keys of the prepared batch (a
+delete row counts as present), M = A minus K. Each missing key is handled like a soft delete row
+without a sequence (scd1: ``_is_deleted`` true, ``_execution_id`` = the batch, stored values and
+sequence columns unchanged; scd2: the current version is closed and marked deleted, no new
+version) or, with ``delete_mode: hard`` (scd1), removed; with ``delete_mode: ignore`` nothing
+happens and there is no guard. An ``init`` or an empty state has nothing to delete. The guard
+raises ``SnapshotGuardError`` (nothing changes) when K is empty, A is not and
+``snapshot_allow_empty`` is false, or when |M| / |A| > ``snapshot_max_missing_ratio`` (equality
+passes). ``BatchStats.snapshot_deleted`` is |M|.
 """
 
 from __future__ import annotations
@@ -51,6 +63,10 @@ class AmbiguousDedupe(ValueError):
     """Tied top rows of one key differ, so the Spark winner would be arbitrary."""
 
 
+class SnapshotGuardError(ValueError):
+    """A snapshot batch would delete too many keys (or all of them): nothing is applied."""
+
+
 @dataclass(frozen=True)
 class ModelTable:
     strategy: str  # replace | append | scd1 | scd2
@@ -62,6 +78,9 @@ class ModelTable:
     has_delete: bool = False
     unknown_member: bool = False
     sentinels: Mapping[str, Any] = field(default_factory=dict)
+    snapshot: bool = False
+    snapshot_max_missing_ratio: float = 0.5
+    snapshot_allow_empty: bool = False
 
     def __post_init__(self) -> None:
         if self.strategy not in ("replace", "append", "scd1", "scd2"):
@@ -77,12 +96,17 @@ class ModelTable:
                 raise ValueError(f"{name} columns not in columns: {sorted(missing)}")
         if set(self.key) & set(self.ignore):
             raise ValueError("key columns must not be ignored")
+        if self.snapshot and self.strategy not in ("scd1", "scd2"):
+            raise ValueError("snapshot is only available for the scd1 and scd2 strategies")
+        if not 0 <= self.snapshot_max_missing_ratio <= 1:
+            raise ValueError("snapshot_max_missing_ratio must be between 0 and 1")
 
 
 @dataclass
 class BatchStats:
     duplicates_dropped: int | None
     null_keys_dropped: int
+    snapshot_deleted: int = 0
 
 
 def _key(table: ModelTable, row: dict) -> tuple:
@@ -192,6 +216,10 @@ def apply_batch(
         dups = len(rows) - len(winners)
         rows = list(winners.values())
 
+    missing: list[tuple] = []
+    if table.snapshot and scd and not (table.has_delete and table.delete_mode == "ignore"):
+        missing = snapshot_missing(table, new_state, rows)  # raises SnapshotGuardError
+
     if table.strategy == "replace":
         new_state = [_audit(r, n, table) for r in rows]
     elif table.strategy == "append":
@@ -200,6 +228,7 @@ def apply_batch(
         _apply_scd1(table, new_state, rows, n)
     else:
         _apply_scd2(table, new_state, rows, n)
+    apply_snapshot_deletes(table, new_state, missing, n)
 
     if table.unknown_member and not any(is_unknown_member(table, r) for r in new_state):
         # Seeded once, never touched; replace rebuilt the table so it is re-added.
@@ -210,7 +239,52 @@ def apply_batch(
             member["_is_current"] = True
         new_state.append(member)
 
-    return new_state, BatchStats(duplicates_dropped=dups, null_keys_dropped=null_dropped)
+    return new_state, BatchStats(
+        duplicates_dropped=dups, null_keys_dropped=null_dropped, snapshot_deleted=len(missing)
+    )
+
+
+def snapshot_missing(table: ModelTable, state: list[dict], rows: list[dict]) -> list[tuple]:
+    """M for a snapshot batch: the active keys of ``state`` (before the batch) that the
+    prepared, deduped ``rows`` do not carry, in state order. Applies the guard."""
+    active: list[tuple] = []
+    for r in state:
+        if table.unknown_member and is_unknown_member(table, r):
+            continue
+        if table.strategy == "scd2" and not r["_is_current"]:
+            continue
+        if not r["_is_deleted"]:
+            active.append(_key(table, r))
+    present = {_key(table, r) for r in rows}
+    missing = [k for k in active if k not in present]
+    if active:
+        if not present and not table.snapshot_allow_empty:
+            raise SnapshotGuardError(f"empty snapshot batch would delete all {len(active)} keys")
+        if len(missing) / len(active) > table.snapshot_max_missing_ratio:
+            raise SnapshotGuardError(
+                f"snapshot batch misses {len(missing)} of {len(active)} active keys"
+            )
+    return missing
+
+
+def apply_snapshot_deletes(
+    table: ModelTable, state: list[dict], missing: list[tuple], n: int
+) -> None:
+    """Handle every missing key like a soft (or hard) delete row without a sequence."""
+    gone = set(missing)
+    if not gone:
+        return
+    if table.strategy == "scd1" and table.delete_mode == "hard":
+        state[:] = [r for r in state if _key(table, r) not in gone]
+        return
+    for r in state:
+        if _key(table, r) not in gone or r["_is_deleted"]:
+            continue
+        if table.strategy == "scd2":
+            if r["_is_current"]:
+                r.update(_is_current=False, _is_deleted=True, _execution_id=n)
+        else:
+            r.update(_is_deleted=True, _execution_id=n)
 
 
 def _audit(row: dict, n: int, table: ModelTable) -> dict:

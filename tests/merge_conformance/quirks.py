@@ -22,6 +22,7 @@ from typing import Any
 from pipetree.testing.merge_model import (
     BatchStats,
     ModelTable,
+    SnapshotGuardError,
     _apply_scd2_late,
     _audit,
     _differs,
@@ -101,6 +102,11 @@ class QuirkModel:
             dups = len(rows) - len(winners)
             rows = list(winners.values())
 
+        # snapshot: the active keys before the batch that the prepared batch lacks (guarded)
+        missing: list[tuple] = []
+        if table.snapshot and scd and not ignore_mode:
+            missing = self._snapshot_missing(table, new_state, rows)
+
         if table.strategy == "replace":
             new_state = [_audit(r, n, table) for r in rows]
         elif table.strategy == "append":
@@ -109,6 +115,7 @@ class QuirkModel:
             self._scd1(table, new_state, rows, n, is_del)
         else:
             self._scd2(table, new_state, rows, n, is_del)
+        self._snapshot_delete(table, new_state, missing, n)
 
         if table.unknown_member and not any(is_unknown_member(table, r) for r in new_state):
             member: dict[str, Any] = dict.fromkeys(table.columns)
@@ -117,7 +124,38 @@ class QuirkModel:
             if table.strategy == "scd2":
                 member["_is_current"] = True
             new_state.append(member)
-        return new_state, BatchStats(duplicates_dropped=dups, null_keys_dropped=null_dropped)
+        return new_state, BatchStats(
+            duplicates_dropped=dups, null_keys_dropped=null_dropped, snapshot_deleted=len(missing)
+        )
+
+    def _snapshot_missing(self, table, state, rows) -> list[tuple]:
+        scd2 = table.strategy == "scd2"
+        active = [
+            _key(table, r)
+            for r in state
+            if not (table.unknown_member and is_unknown_member(table, r))
+            and (r["_is_current"] if scd2 else True)
+            and not r["_is_deleted"]
+        ]
+        present = {_key(table, r) for r in rows}
+        missing = [k for k in active if k not in present]
+        if active and (
+            (not present and not table.snapshot_allow_empty)
+            or len(missing) / len(active) > table.snapshot_max_missing_ratio
+        ):
+            raise SnapshotGuardError(f"snapshot guard: {len(missing)} of {len(active)} missing")
+        return missing
+
+    def _snapshot_delete(self, table, state, missing, n) -> None:
+        for k in missing:
+            if table.strategy == "scd1" and table.delete_mode == "hard":
+                state[:] = [r for r in state if _key(table, r) != k]
+            elif table.strategy == "scd1":
+                row = next(r for r in state if _key(table, r) == k)
+                row.update(_is_deleted=True, _execution_id=n)
+            else:
+                row = next(r for r in state if r["_is_current"] and _key(table, r) == k)
+                row.update(_is_current=False, _is_deleted=True, _execution_id=n)
 
     def _scd1(self, table, state, winners, n, is_del) -> None:
         tracked = [c for c in table.columns if c not in table.key and c not in table.ignore]

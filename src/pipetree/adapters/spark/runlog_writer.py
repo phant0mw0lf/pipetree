@@ -34,6 +34,7 @@ _SCHEMA = StructType(
         # existing table, so a fresh and an evolved run log share column order.
         StructField("null_keys_dropped", LongType(), nullable=True),
         StructField("run_tags", ArrayType(StringType()), nullable=True),
+        StructField("snapshot_deleted", LongType(), nullable=True),
     ]
 )
 
