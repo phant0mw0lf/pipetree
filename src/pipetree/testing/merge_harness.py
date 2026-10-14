@@ -262,6 +262,9 @@ def build_table(case: Case, schema: str = "mc") -> Any:
             "delete_when": case.delete_when,
             "delete_mode": t.delete_mode,
             "ignore_columns": list(t.ignore),
+            "snapshot": t.snapshot,
+            "snapshot_max_missing_ratio": t.snapshot_max_missing_ratio,
+            "snapshot_allow_empty": t.snapshot_allow_empty,
         },
         "unknown_member": t.unknown_member,
         "surrogate_key": case.surrogate_key,
@@ -590,6 +593,11 @@ class _Comparator:
             stat_problems.append(
                 f"null_keys_dropped: model {stats.null_keys_dropped}, table {got_null}"
             )
+        got_snap = result.get("snapshot_deleted", 0)
+        if got_snap != stats.snapshot_deleted:
+            stat_problems.append(
+                f"snapshot_deleted: model {stats.snapshot_deleted}, table {got_snap}"
+            )
         if stat_problems:
             out.append(Divergence(case, i, "stats", "\n".join(stat_problems)))
 
@@ -777,7 +785,7 @@ def run_case(
 
 def model_trajectory(case: Case, model: Model | None = None) -> list:
     """What ``model`` predicts for the whole history (no Spark): per batch the
-    normalised rows and the two stats, then the normalised rows after the
+    normalised rows and the stats, then the normalised rows after the
     idempotence re-run. Two models with equal trajectories cannot be told apart
     by the table comparison of a case."""
     model = model or ReferenceModel()
@@ -786,7 +794,14 @@ def model_trajectory(case: Case, model: Model | None = None) -> list:
     out: list = []
     for i, batch in enumerate(case.batches):
         state, stats = model.apply_batch(t, state, batch, i + 1, init=i in case.inits)
-        out.append((normalise_model(state, t), stats.duplicates_dropped, stats.null_keys_dropped))
+        out.append(
+            (
+                normalise_model(state, t),
+                stats.duplicates_dropped,
+                stats.null_keys_dropped,
+                stats.snapshot_deleted,
+            )
+        )
     if _has_rerun(case):
         last = len(case.batches) - 1
         state, _ = model.apply_batch(t, state, case.batches[last], last + 2, init=False)

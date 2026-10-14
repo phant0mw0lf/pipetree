@@ -120,3 +120,48 @@ def test_a_tag_run_notes_the_unrefreshed_input_and_records_run_tags(tmp_path: Pa
     assert run_tags[(1, "bronze.customer")] == []
     assert run_tags[(2, "silver.customer_names")] == ["reporting"]
     assert run_tags[(2, "bronze.customer")] == ["reporting"]
+
+
+SNAPSHOT_CONFIG = """
+systems:
+  seed:
+    type: csv
+    path: customer.csv
+
+bronze:
+  tables:
+    snap_customer:
+      source:
+        system: seed
+        object: customer
+      business_key: [id]
+      strategy: scd1
+      merge:
+        snapshot: true
+"""
+
+
+def test_a_snapshot_run_notes_the_deleted_keys_and_logs_them(tmp_path: Path, spark, caplog):
+    from pipetree import run_pipeline
+    from pipetree.adapters.spark.runlog_writer import DeltaRunLogWriter
+    from pipetree.runlog.notifier import format_digest
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(SNAPSHOT_CONFIG)
+    log = DeltaRunLogWriter(spark, table_fqn="snaprun_meta.run_log")
+    (tmp_path / "customer.csv").write_text("id,name\n1,Alice\n2,Bob\n3,Carol\n")
+    run_pipeline(config_path, execution_id=1, run_log_writer=log)
+
+    (tmp_path / "customer.csv").write_text("id,name\n1,Alice\n2,Bob\n")
+    with caplog.at_level("WARNING", logger="pipetree"):
+        digest = run_pipeline(config_path, execution_id=2, run_log_writer=log)
+
+    note = "snapshot: 1 key(s) not in the source were deleted"
+    assert digest.succeeded
+    assert digest.results["bronze.snap_customer"].notes == [note]
+    assert f"notes: {note}" in format_digest(digest)
+    assert any("snapshot: 1 key(s)" in r.getMessage() for r in caplog.records)
+    table = spark.table("bronze.snap_customer").collect()
+    assert {r["id"]: r["_is_deleted"] for r in table} == {1: False, 2: False, 3: True}
+    logged = spark.table("snaprun_meta.run_log").collect()
+    assert {r["_execution_id"]: r["snapshot_deleted"] for r in logged} == {1: 0, 2: 1}

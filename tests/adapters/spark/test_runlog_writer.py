@@ -160,3 +160,32 @@ def test_a_run_log_table_without_run_tags_gains_the_column_on_the_next_write(spa
     assert by_fqn["bronze.old"]["run_tags"] is None
     assert by_fqn["bronze.new"]["run_tags"] == ["daily"]
     assert spark.table(fqn).columns == spark.table(fresh_fqn).columns
+
+
+def test_a_run_log_table_without_snapshot_deleted_gains_the_column_on_the_next_write(spark):
+    fresh_fqn, fqn = "rl_fresh_snap.log", "rl_evolve_snap.log"
+    spark.sql("CREATE SCHEMA IF NOT EXISTS rl_evolve_snap")
+    spark.sql(
+        f"CREATE TABLE {fqn} (_execution_id BIGINT NOT NULL, table_fqn STRING NOT NULL, "
+        "layer STRING, strategy STRING, status STRING, attempts BIGINT, started_at BIGINT, "
+        "ended_at BIGINT, duration_ms BIGINT, rows_written BIGINT, duplicates_dropped BIGINT, "
+        "schema_changes ARRAY<STRING>, error_type STRING, error_message STRING, "
+        "null_keys_dropped BIGINT, run_tags ARRAY<STRING>) USING delta"
+    )
+    spark.sql(
+        f"INSERT INTO {fqn} (_execution_id, table_fqn, status) VALUES (1, 'bronze.old', 'ok')"
+    )
+    new_row = {
+        "_execution_id": 2,
+        "table_fqn": "bronze.new",
+        "status": "succeeded",
+        "snapshot_deleted": 3,
+    }
+
+    DeltaRunLogWriter(spark, table_fqn=fqn).write([new_row], execution_id=2)
+    DeltaRunLogWriter(spark, table_fqn=fresh_fqn).write([new_row], execution_id=2)
+
+    by_fqn = {r["table_fqn"]: r for r in spark.table(fqn).collect()}
+    assert by_fqn["bronze.old"]["snapshot_deleted"] is None
+    assert by_fqn["bronze.new"]["snapshot_deleted"] == 3
+    assert spark.table(fqn).columns == spark.table(fresh_fqn).columns

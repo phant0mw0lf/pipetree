@@ -172,6 +172,24 @@ class Merge(BaseModel):
         description="Columns whose changes alone are written in place: no new scd2 version "
         "and no audit column update.",
     )
+    snapshot: bool = Field(
+        default=False,
+        description="The batch is the complete current state of the source (scd1 and scd2 "
+        "only). An active key of the table that is not in the batch is handled like a delete "
+        "row, following delete_mode.",
+    )
+    snapshot_max_missing_ratio: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="With snapshot: the table fails and nothing is written when more than "
+        "this share of its active keys is missing from the batch.",
+    )
+    snapshot_allow_empty: bool = Field(
+        default=False,
+        description="With snapshot: an empty batch is an error unless this is true (then every "
+        "active key counts as missing, subject to snapshot_max_missing_ratio).",
+    )
 
 
 class Table(BaseModel):
@@ -230,7 +248,9 @@ class Table(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _scd2_cannot_hard_delete(self) -> Table:
+    def _merge_options_fit_the_strategy(self) -> Table:
+        if self.merge.snapshot and self.strategy not in ("scd1", "scd2"):
+            raise ValueError("snapshot is only available for the scd1 and scd2 strategies")
         if self.strategy == "scd2" and self.merge.delete_mode == "hard":
             raise ValueError(
                 "scd2 cannot be combined with delete_mode: hard (it would destroy history)"

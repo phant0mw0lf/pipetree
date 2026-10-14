@@ -8,6 +8,7 @@ from pipetree.testing.merge_model import (
     AmbiguousDedupe,
     BatchStats,
     ModelTable,
+    SnapshotGuardError,
     apply_batch,
     is_unknown_member,
 )
@@ -719,3 +720,213 @@ def test_scd2_two_late_rows_of_equal_sequence_the_later_batch_is_the_later_versi
         R(1, "b", seq=1, e=3, cur=False),
         R(1, "c", seq=2, e=1, cur=True),
     ]
+
+
+# ------------------------------------------------------------------ snapshot
+
+
+def S(strategy, **kw):
+    kw.setdefault("snapshot", True)
+    kw.setdefault("snapshot_max_missing_ratio", 1.0)
+    return T(strategy, **kw)
+
+
+def test_snapshot_option_validation():
+    with pytest.raises(ValueError, match="snapshot"):
+        T("replace", snapshot=True)
+    with pytest.raises(ValueError, match="snapshot"):
+        T("append", snapshot=True)
+    with pytest.raises(ValueError, match="ratio"):
+        T("scd1", snapshot=True, snapshot_max_missing_ratio=1.5)
+
+
+def test_snapshot_scd1_soft_marks_missing_keys_deleted():
+    t = S("scd1", has_delete=True)
+    state, stats = run(
+        t,
+        B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}, {"id": 3, "v": "c"}),
+        B({"id": 2, "v": "b"}),
+    )
+    assert state == [R(1, "a", d=True, e=2), R(2, "b", e=1), R(3, "c", d=True, e=2)]
+    assert stats.snapshot_deleted == 2
+
+
+def test_snapshot_scd1_missing_key_already_deleted_is_not_counted_or_bumped():
+    t = S("scd1")
+    state, stats = run(t, B({"id": 1}, {"id": 2}), B({"id": 2}), B({"id": 2}))
+    assert state == [R(1, e=2, d=True), R(2, e=1)]
+    assert stats.snapshot_deleted == 0
+
+
+def test_snapshot_scd1_hard_removes_missing_keys():
+    t = S("scd1", has_delete=True, delete_mode="hard")
+    state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}), B({"id": 2, "v": "b"}))
+    assert state == [R(2, "b", e=1)]
+    assert stats.snapshot_deleted == 1
+    # and the key returning is a fresh insert
+    state, _ = apply_batch(t, state, B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}), 3)
+    assert state == [R(2, "b", e=1), R(1, "a", e=3)]
+
+
+def test_snapshot_scd2_closes_and_marks_the_current_version_deleted():
+    t = S("scd2")
+    state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}), B({"id": 2, "v": "b"}))
+    assert state == [R(1, "a", d=True, e=2, cur=False), R(2, "b", e=1, cur=True)]
+    assert stats.snapshot_deleted == 1
+
+
+def test_snapshot_scd2_missing_key_with_history_keeps_older_versions():
+    t = S("scd2")
+    state, _ = run(
+        t, B({"id": 1, "v": "a"}, {"id": 2}), B({"id": 1, "v": "b"}, {"id": 2}), B({"id": 2})
+    )
+    assert state == [
+        R(1, "a", e=2, cur=False),
+        R(2, e=1, cur=True),
+        R(1, "b", d=True, e=3, cur=False),
+    ]
+
+
+def test_snapshot_returning_key_is_revived_scd1_and_gets_a_new_scd2_version():
+    t1 = S("scd1")
+    state, stats = run(
+        t1, B({"id": 1, "v": "a"}, {"id": 2}), B({"id": 2}), B({"id": 1, "v": "a"}, {"id": 2})
+    )
+    assert state == [R(1, "a", e=3), R(2, e=1)]
+    assert stats.snapshot_deleted == 0
+    t2 = S("scd2")
+    state, _ = run(
+        t2, B({"id": 1, "v": "a"}, {"id": 2}), B({"id": 2}), B({"id": 1, "v": "a"}, {"id": 2})
+    )
+    assert state == [
+        R(1, "a", d=True, e=2, cur=False),
+        R(2, e=1, cur=True),
+        R(1, "a", e=3, cur=True),
+    ]
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_never_touches_the_unknown_member(strategy):
+    t = S(strategy, unknown_member=True, sentinels={"id": -1})
+    state, stats = run(t, B({"id": 1, "v": "a"}), B({"id": 2, "v": "b"}))
+    members = [r for r in state if is_unknown_member(t, r)]
+    assert len(members) == 1 and members[0]["_execution_id"] == 1
+    assert stats.snapshot_deleted == 1
+    # an empty batch with allow_empty deletes every real key, not the member
+    t = S(strategy, unknown_member=True, sentinels={"id": -1}, snapshot_allow_empty=True)
+    state, stats = run(t, B({"id": 1, "v": "a"}), [])
+    assert sum(is_unknown_member(t, r) for r in state) == 1
+    assert stats.snapshot_deleted == 1
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_ignore_mode_leaves_missing_keys_active_and_has_no_guard(strategy):
+    t = S(
+        strategy,
+        has_delete=True,
+        delete_mode="ignore",
+        snapshot_max_missing_ratio=0.0,
+    )
+    cur = True if strategy == "scd2" else None
+    state, stats = run(t, B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}), [])
+    assert state == [R(1, "a", e=1, cur=cur), R(2, "b", e=1, cur=cur)]
+    assert stats.snapshot_deleted == 0
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_first_load_and_init_delete_nothing_and_have_no_guard(strategy):
+    t = S(strategy, snapshot_max_missing_ratio=0.0)
+    state, stats = run(t, B({"id": 1}, {"id": 2}))
+    assert len(state) == 2 and stats.snapshot_deleted == 0
+    state, stats = apply_batch(t, state, B({"id": 3}), 2, init=True)
+    assert [r["id"] for r in state] == [3] and stats.snapshot_deleted == 0
+    state, stats = apply_batch(t, [], [], 1)
+    assert state == [] and stats.snapshot_deleted == 0
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_guard_ratio_equality_passes_and_above_raises(strategy):
+    t = S(strategy, snapshot_max_missing_ratio=0.5)
+    first = B({"id": 1}, {"id": 2}, {"id": 3}, {"id": 4})
+    state, stats = run(t, first, B({"id": 3}, {"id": 4}))  # 2 of 4 = 0.5: passes
+    assert stats.snapshot_deleted == 2
+    state, _ = run(t, first)
+    before = copy.deepcopy(state)
+    with pytest.raises(SnapshotGuardError):
+        apply_batch(t, state, B({"id": 4}), 2)  # 3 of 4
+    assert state == before
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_guard_empty_batch_needs_allow_empty(strategy):
+    t = S(strategy)  # ratio 1.0 would pass; the empty rule still fires
+    state, _ = run(t, B({"id": 1}))
+    with pytest.raises(SnapshotGuardError):
+        apply_batch(t, state, [], 2)
+    # a batch of only NULL-key rows is empty after preparation
+    with pytest.raises(SnapshotGuardError):
+        apply_batch(t, state, B({"id": None}), 2)
+    t_ok = S(strategy, snapshot_allow_empty=True)
+    state, stats = apply_batch(t_ok, state, [], 2)
+    assert stats.snapshot_deleted == 1
+    # nothing active: an empty batch is fine
+    state, stats = apply_batch(t, state, [], 3)
+    assert stats.snapshot_deleted == 0
+
+
+def test_snapshot_empty_allowed_still_obeys_the_ratio():
+    t = S("scd1", snapshot_allow_empty=True, snapshot_max_missing_ratio=0.5)
+    state, _ = run(t, B({"id": 1}))
+    with pytest.raises(SnapshotGuardError):
+        apply_batch(t, state, [], 2)
+
+
+@pytest.mark.parametrize("strategy", ["scd1", "scd2"])
+def test_snapshot_delete_when_row_counts_as_present_and_missing_key_in_one_batch(strategy):
+    t = S(strategy, has_delete=True)
+    cur = False if strategy == "scd2" else None
+    state, stats = run(
+        t,
+        B({"id": 1, "v": "a"}, {"id": 2, "v": "b"}, {"id": 3, "v": "c"}),
+        B(D(1), {"id": 3, "v": "c"}),
+    )
+    assert stats.snapshot_deleted == 1  # key 2 only; key 1 is a normal delete row
+    by_id = {r["id"]: r for r in state}
+    assert by_id[1]["_is_deleted"] and by_id[2]["_is_deleted"] and not by_id[3]["_is_deleted"]
+    assert by_id[1]["_execution_id"] == by_id[2]["_execution_id"] == 2
+    assert by_id[1]["v"] == "a" and by_id[2]["v"] == "b"
+    if cur is not None:
+        assert not by_id[1]["_is_current"] and not by_id[2]["_is_current"]
+
+
+def test_snapshot_ignore_mode_delete_row_is_filtered_first():
+    t = S("scd1", has_delete=True, delete_mode="ignore")
+    state, stats = run(t, B({"id": 1, "v": "a"}), B(D(1)))
+    assert state == [R(1, "a", e=1)] and stats.snapshot_deleted == 0
+
+
+def test_snapshot_scd1_missing_key_is_deleted_regardless_of_its_sequence():
+    t = S("scd1", sequence_by=("seq",))
+    state, stats = run(
+        t, B({"id": 1, "v": "a", "seq": 99}, {"id": 2, "seq": 1}), B({"id": 2, "seq": 1})
+    )
+    assert state == [R(1, "a", seq=99, d=True, e=2), R(2, seq=1, e=1)]
+    assert stats.snapshot_deleted == 1
+    # a later row with a lower sequence than the stored one is still ignored
+    state, _ = apply_batch(t, state, B({"id": 1, "v": "z", "seq": 5}, {"id": 2, "seq": 1}), 3)
+    assert state[0] == R(1, "a", seq=99, d=True, e=2)
+
+
+def test_snapshot_scd2_with_sequence_by_deletes_the_current_version():
+    t = S("scd2", sequence_by=("seq",))
+    state, _ = run(t, B({"id": 1, "v": "a", "seq": 5}, {"id": 2, "seq": 1}), B({"id": 2, "seq": 1}))
+    assert state == [R(1, "a", seq=5, d=True, e=2, cur=False), R(2, seq=1, e=1, cur=True)]
+
+
+def test_snapshot_dedupe_and_null_keys_still_counted():
+    t = S("scd1")
+    state, stats = run(
+        t, B({"id": 1, "v": "a"}), B({"id": 1, "v": "b"}, {"id": 1, "v": "b"}, {"id": None})
+    )
+    assert stats.duplicates_dropped == 1 and stats.null_keys_dropped == 1
+    assert stats.snapshot_deleted == 0
