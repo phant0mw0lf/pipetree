@@ -170,6 +170,35 @@ def test_append_table_retries_via_delete_by_execution_id_when_supported():
     assert adapter.deleted_execution_ids == [("silver.appended", 42)]
 
 
+class FailingCleanupAdapter(FakeAdapter):
+    def delete_by_execution_id(self, table, execution_id):
+        raise RuntimeError("delete failed")
+
+
+def test_failing_cleanup_before_an_append_retry_fails_the_table_and_not_the_run():
+    graph = make_graph(
+        {"bronze.appended": "append", "silver.reader": "scd1", "bronze.other": "scd1"},
+        edges={"silver.reader": {"bronze.appended"}},
+    )
+    adapter = FailingCleanupAdapter(
+        behaviors={"bronze.appended": AlwaysFails(lambda: Throttled("429"))},
+        capabilities=Capabilities(supports_delete_by_execution_id=True),
+    )
+
+    digest = run_pipeline(graph, adapter, execution_id=1, retry_policy=FAST_RETRY)
+
+    failed = digest.results["bronze.appended"]
+    assert failed.status == TableStatus.FAILED
+    assert failed.attempts == 1
+    assert failed.error_type == "RuntimeError"
+    assert "cleanup before retry failed: delete failed" in (failed.error_message or "")
+    assert "Throttled: 429" in (failed.error_message or "")
+    assert digest.results["silver.reader"].status == TableStatus.UPSTREAM_FAILED
+    assert digest.results["bronze.other"].status == TableStatus.SUCCEEDED
+    assert digest.exit_code == 1
+    assert adapter.calls.count("bronze.appended") == 1  # not retried
+
+
 def test_execution_id_is_generated_when_not_given():
     graph = make_graph({"bronze.orders": "scd1"})
     adapter = FakeAdapter()
