@@ -45,3 +45,5 @@ class SharePointListSource:
 | `init` | `True` on a `--init` run |
 
 Built-in types, for comparison: `csv`, `json`, `parquet`, `sqlserver`, `kusto`, `storage_stream` (and its aliases `d365_export`, `synapse_link`).
+
+A reader runs inside `SparkAdapter.run_table`, so Spark and Delta errors it triggers are already classified for retry. An error from your own client library (an HTTP 429 from the Graph API, say) is not: raise `pipetree.executor.retry.Throttled`, `TimeoutError` or `ConnectionError` for it, or the table fails on the first attempt. See [which errors are transient](../../concepts/running/#which-errors-are-transient).

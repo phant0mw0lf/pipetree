@@ -33,7 +33,10 @@ The design rationale is in the [Pipeline Engineering](https://datadave.dev/tags/
   one real implementation - local Spark + Delta today, the same code path
   Fabric and Databricks run on - with `scd1` and `scd2` implemented as a Delta
   merge, and `replace` and `append` as plain overwrite and append writes. With no active SparkSession it
-  builds a local one; on a real cluster it reuses the one already running.
+  builds a local one; on a real cluster it reuses the one already running. It
+  also translates the engine's transient errors (Delta commit conflicts,
+  throttled storage, socket timeouts and resets) into the three types the
+  executor retries (`pipetree.adapters.spark.transient`).
 - **Sources** (`pipetree.sources`) read a `source` table's raw input,
   keyed on `systems.<name>.type`: `csv`/`json`/`parquet` (local files, the
   example project's stand-in for a real connector), `sqlserver` (JDBC),
