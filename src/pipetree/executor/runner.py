@@ -213,7 +213,30 @@ def _run_with_retries(
             # atomic by clearing out this run's rows first.
             if can_retry and table.strategy == "append":
                 if adapter.capabilities.supports_delete_by_execution_id:
-                    adapter.delete_by_execution_id(table, execution_id)
+                    try:
+                        adapter.delete_by_execution_id(table, execution_id)
+                    except Exception as cleanup_exc:  # noqa: BLE001 - recorded, not swallowed
+                        # The failed attempt's rows may still be in the table, so another
+                        # attempt would duplicate them: the table fails, the run goes on.
+                        _logger.error(
+                            "%s: cleanup before retry failed: %s: %s",
+                            table.fqn,
+                            type(cleanup_exc).__name__,
+                            cleanup_exc,
+                        )
+                        return _finish(
+                            table.fqn,
+                            TableStatus.FAILED,
+                            attempts,
+                            started_at,
+                            start_perf,
+                            error_type=type(cleanup_exc).__name__,
+                            error_message=(
+                                f"cleanup before retry failed: {cleanup_exc} "
+                                f"(after {type(exc).__name__}: {exc})"
+                            ),
+                            details=_with_inputs(None, inputs_not_refreshed),
+                        )
                 else:
                     can_retry = False
 
