@@ -34,6 +34,21 @@ With both `--with-*` flags the dependents are added first, then the ancestors of
 - A table that fails ends as `failed`. Every table downstream of it ends as `upstream_failed` and never starts.
 - Independent branches keep running.
 
+### Which errors are transient
+
+The executor retries three exception types: `Throttled` (`pipetree.executor.retry`), `TimeoutError` and `ConnectionError`. Spark raises none of them, so the `SparkAdapter` translates what it recognises, by the Java class name in the error, also when the class is only the cause underneath another exception:
+
+| Error from the engine | Retried as |
+| --- | --- |
+| Delta commit conflicts: `ConcurrentAppendException`, `ConcurrentDeleteReadException`, `ConcurrentDeleteDeleteException`, `ProtocolChangedException`, `MetadataChangedException` | `Throttled` |
+| ADLS or Blob storage answering 429, 503, `ServerBusy` or `TooManyRequests` (`AbfsRestOperationException`, `BlobStorageException`, `DataLakeStorageException`). Storage has no class for throttling, so these are recognised by the status in the text, and only for these classes. | `Throttled` |
+| `java.net.SocketTimeoutException`, `org.apache.hadoop.net.ConnectTimeoutException`, `java.util.concurrent.TimeoutException` | `TimeoutError` |
+| `java.net.SocketException` (a connection reset), `java.net.ConnectException` | `ConnectionError` |
+
+Everything else, such as a missing column, a failed merge condition or a `ValueError` from your own code, is raised unchanged and fails the table on the first attempt. The original error stays as the `__cause__` of the translated one.
+
+An adapter you write yourself has to do the same: raise `Throttled`, `TimeoutError` or `ConnectionError` for errors worth retrying, or pass `RetryPolicy(is_transient=...)` to `run_pipeline(retry_policy=...)`. The predicate is only asked about errors that are not already one of those three types, and it sees the error as the adapter raised it. The CLI has no option for it.
+
 Table statuses: `succeeded`, `retried→succeeded`, `failed`, `upstream_failed`, `skipped`. A table outside `--select` is `skipped` and does not count against the run.
 
 ## Exit codes
