@@ -10,6 +10,8 @@ from typing import Any
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, LongType, StringType, StructField, StructType
 
+from pipetree.adapters.spark.schema_ops import ensure_schema
+
 # Matches pipetree.runlog.collector.build_run_log_rows() exactly. Needed
 # explicitly because a column that's None in every row of a batch (a
 # fully successful run has no error_type anywhere, for instance) can't
@@ -48,8 +50,7 @@ class DeltaRunLogWriter:
         if not rows:
             return
 
-        schema_name = self._table_fqn.split(".")[0]
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
+        ensure_schema(self._spark, self._table_fqn.split(".")[0])
         df = self._spark.createDataFrame(rows, schema=_SCHEMA)
 
         # mergeSchema: a run log created before a column was added to _SCHEMA
