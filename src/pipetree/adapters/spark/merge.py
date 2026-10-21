@@ -22,6 +22,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import Column, DataFrame, Row, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
+    ArrayType,
     DataType,
     DateType,
     DecimalType,
@@ -232,7 +233,11 @@ def merge_scd1(
         set=update_values,
     )
     in_place = _ignored_change_update(
-        columns, table, reconciliation.target_columns, f"target._is_deleted = false AND {not_older}"
+        columns,
+        table,
+        reconciliation.target_columns,
+        f"target._is_deleted = false AND {not_older}",
+        _map_columns(prepared),
     )
     if in_place is not None:
         # Only ignored columns changed (ignore_columns alone update in place): written in place,
@@ -362,7 +367,9 @@ def merge_scd2(
             condition=f"source.{_IS_DELETE_COL} = false AND ({change_cond})", set=close_for_change
         )
     )
-    in_place = _ignored_change_update(columns, table, reconciliation.target_columns)
+    in_place = _ignored_change_update(
+        columns, table, reconciliation.target_columns, map_columns=_map_columns(not_deleted)
+    )
     if in_place is not None:
         # Only ignored columns changed (ignore_columns alone update in place): the CURRENT version
         # is updated
@@ -954,6 +961,7 @@ def _ignored_change_update(
     table: Table,
     existing_columns: frozenset[str] | None,
     extra_condition: str | None = None,
+    map_columns: dict[str, DataType] | None = None,
 ) -> tuple[str, dict[str, str | Column]] | None:
     """Condition and `set` for the in-place update of a matched row whose only
     change is in `ignore_columns` (ignore_columns alone update in place): the ignored columns are
@@ -962,7 +970,12 @@ def _ignored_change_update(
     compare = _ignored_columns(columns, table, existing_columns)
     if not compare:
         return None
-    differs = " OR ".join(f"NOT (target.{c} <=> source.{c})" for c in compare)
+    maps = map_columns or {}
+    differs = " OR ".join(
+        f"NOT ({_comparable_sql('target', c, maps.get(c))}"
+        f" <=> {_comparable_sql('source', c, maps.get(c))})"
+        for c in compare
+    )
     condition = f"source.{_IS_DELETE_COL} = false"
     if extra_condition:
         condition += f" AND {extra_condition}"
@@ -1007,34 +1020,89 @@ def _not_older_sql(table: Table, existing_columns: frozenset[str] | None = None)
     return expr
 
 
-def _map_columns(df: DataFrame) -> frozenset[str]:
-    """Columns of MAP type. Spark defines no equality (and so no `<=>`) for maps; a map is
-    compared through `array_sort(map_entries(...))`, which is order-independent and null-safe."""
-    return frozenset(f.name for f in df.schema.fields if isinstance(f.dataType, MapType))
+def _has_map(data_type: DataType) -> bool:
+    """True when `data_type` is or contains (at any nesting) a MapType."""
+    if isinstance(data_type, MapType):
+        return True
+    if isinstance(data_type, ArrayType):
+        return _has_map(data_type.elementType)
+    if isinstance(data_type, StructType):
+        return any(_has_map(f.dataType) for f in data_type.fields)
+    return False
 
 
-def _comparable_sql(side: str, column: str, is_map: bool) -> str:
-    return f"array_sort(map_entries({side}.{column}))" if is_map else f"{side}.{column}"
+def _map_columns(df: DataFrame) -> dict[str, DataType]:
+    """Columns whose type contains a MAP, with their type. Spark defines no equality (and so no
+    `<=>`) for maps; such a column is compared through its canonical form (see `_canonical_sql`),
+    which is order-independent and null-safe."""
+    return {f.name: f.dataType for f in df.schema.fields if _has_map(f.dataType)}
 
 
-def _comparable_col(df: DataFrame, column: str, is_map: bool) -> Column:
-    return F.array_sort(F.map_entries(df[column])) if is_map else df[column]
+def _canonical_sql(expr: str, data_type: DataType, depth: int = 0) -> str:
+    """`expr` with every map (at any nesting) turned into an array of (key, value) structs in key
+    order, so the result has an equality. Lambda variables are unique per nesting level."""
+    if isinstance(data_type, MapType):
+        key = f"k{depth}"
+        value = _canonical_sql(f"{expr}[{key}]", data_type.valueType, depth + 1)
+        entry = f"struct({key} AS key, {value} AS value)"
+        return f"transform(array_sort(map_keys({expr})), {key} -> {entry})"
+    if isinstance(data_type, ArrayType) and _has_map(data_type.elementType):
+        element = f"e{depth}"
+        inner = _canonical_sql(element, data_type.elementType, depth + 1)
+        return f"transform({expr}, {element} -> {inner})"
+    if isinstance(data_type, StructType) and _has_map(data_type):
+        fields = ", ".join(
+            f"{_canonical_sql(f'{expr}.`{f.name}`', f.dataType, depth + 1)} AS `{f.name}`"
+            for f in data_type.fields
+        )
+        # A NULL struct stays NULL (its fields would otherwise rebuild as a struct of NULLs).
+        return f"CASE WHEN {expr} IS NULL THEN NULL ELSE struct({fields}) END"
+    return expr
+
+
+def _canonical_col(col: Column, data_type: DataType) -> Column:
+    """DataFrame counterpart of `_canonical_sql`."""
+    if isinstance(data_type, MapType):
+        return F.transform(
+            F.array_sort(F.map_keys(col)),
+            lambda key: F.struct(
+                key.alias("key"), _canonical_col(col[key], data_type.valueType).alias("value")
+            ),
+        )
+    if isinstance(data_type, ArrayType) and _has_map(data_type.elementType):
+        return F.transform(col, lambda e: _canonical_col(e, data_type.elementType))
+    if isinstance(data_type, StructType) and _has_map(data_type):
+        rebuilt = F.struct(
+            *[_canonical_col(col[f.name], f.dataType).alias(f.name) for f in data_type.fields]
+        )
+        return F.when(col.isNull(), F.lit(None)).otherwise(rebuilt)
+    return col
+
+
+def _comparable_sql(side: str, column: str, map_type: DataType | None) -> str:
+    expr = f"{side}.{column}"
+    return _canonical_sql(expr, map_type) if map_type is not None else expr
+
+
+def _comparable_col(df: DataFrame, column: str, map_type: DataType | None) -> Column:
+    return _canonical_col(df[column], map_type) if map_type is not None else df[column]
 
 
 def _change_condition_sql(
     columns: list,
     table: Table,
     existing_columns: frozenset[str] | None = None,
-    map_columns: frozenset[str] = frozenset(),
+    map_columns: dict[str, DataType] | None = None,
 ) -> str:
     compare_cols = _comparable_columns(columns, table, existing_columns)
     if not compare_cols:
         # No tracked column: nothing can be a tracked change (an ignored-only
         # change is handled by `_ignored_change_update`).
         return "false"
+    maps = map_columns or {}
     same = " AND ".join(
-        f"{_comparable_sql('target', c, c in map_columns)}"
-        f" <=> {_comparable_sql('source', c, c in map_columns)}"
+        f"{_comparable_sql('target', c, maps.get(c))}"
+        f" <=> {_comparable_sql('source', c, maps.get(c))}"
         for c in compare_cols
     )
     return f"NOT ({same})"
@@ -1059,8 +1127,8 @@ def _rows_that_changed(
 
     maps = _map_columns(source_df)
     conditions = [
-        ~_comparable_col(source_df, col, col in maps).eqNullSafe(
-            _comparable_col(current_df, col, col in maps)
+        ~_comparable_col(source_df, col, maps.get(col)).eqNullSafe(
+            _comparable_col(current_df, col, maps.get(col))
         )
         for col in compare_cols
     ]
