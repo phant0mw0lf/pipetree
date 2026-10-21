@@ -44,6 +44,7 @@ from pipetree.adapters.spark.audit import (
     update_audit_values,
 )
 from pipetree.adapters.spark.dedupe import dedupe_for_merge
+from pipetree.adapters.spark.schema_ops import ensure_schema
 from pipetree.executor.execution_id import timestamp_bigint
 from pipetree.model import DELETE_MARKER_COLUMN, RESERVED_AUDIT_COLUMNS, Table
 from pipetree.schema.infer import infer_schema
@@ -878,8 +879,7 @@ def _require_identity_column(spark: SparkSession, table: Table) -> None:
 
 
 def _ensure_schema(spark: SparkSession, fqn: str) -> None:
-    schema = fqn.split(".")[0]
-    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    ensure_schema(spark, fqn.split(".")[0])
 
 
 def _table_exists(spark: SparkSession, fqn: str) -> bool:
