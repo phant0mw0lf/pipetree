@@ -205,6 +205,36 @@ def test_delete_by_execution_id_translates_too():
     assert raised.value.__cause__ is error
 
 
+def test_delete_by_execution_id_leaves_other_errors_alone():
+    error = ValueError("not an engine problem")
+
+    class Catalog:
+        def tableExists(self, fqn: str) -> bool:  # noqa: N802 - the Spark API's name
+            raise error
+
+    adapter = SparkAdapter(SimpleNamespace(catalog=Catalog()), systems={}, base_dir=".")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError) as raised:
+        adapter.delete_by_execution_id(table(), 1)
+
+    assert raised.value is error
+
+
+def test_an_error_whose_text_cannot_be_read_is_named_by_its_type():
+    class Unreadable(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("needs a live gateway")
+
+    assert _translate(Unreadable()) is None
+
+
+def test_a_chain_that_loops_back_on_itself_ends():
+    first, second = Exception("a"), Exception("b")
+    first.__cause__, second.__cause__ = second, first
+
+    assert _translate(first) is None
+
+
 def table() -> Table:
     return Table.model_validate(
         {

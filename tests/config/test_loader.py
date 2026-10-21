@@ -552,4 +552,5 @@ def _sourced_table(source):
 def test_validate_raw_reports_the_path_and_reason_of_a_structural_error(raw, path, reason):
     with pytest.raises(ConfigError) as exc_info:
         validate_raw(raw)
-    return exc_info.value
+    assert exc_info.value.path == path
+    assert reason in exc_info.value.reason
