@@ -341,3 +341,66 @@ def test_an_empty_quirk_model_is_the_reference_model_and_unknown_flags_are_rejec
     assert run_case(spark, case, model=QuirkModel(), attribution=True) == []
     with pytest.raises(ValueError, match="unknown quirk flags"):
         QuirkModel({"null-key-kept"})
+
+
+def _failing_run_table(monkeypatch, *, on_execution_id):
+    from pipetree.adapters.spark.adapter import SparkAdapter
+
+    real = SparkAdapter.run_table
+
+    def run_table(self, table, *, execution_id, init=False, **kw):
+        if execution_id == on_execution_id:
+            raise RuntimeError("boom")
+        return real(self, table, execution_id=execution_id, init=init, **kw)
+
+    monkeypatch.setattr(SparkAdapter, "run_table", run_table)
+
+
+def test_a_raising_batch_is_reported_as_an_error_divergence(spark, monkeypatch):
+    _failing_run_table(monkeypatch, on_execution_id=2)
+    case = _case("scd1", [[_row(1)], [_row(2)]], sequence_by=())
+
+    (div,) = run_case(spark, case)
+    assert (div.kind, div.batch_index) == ("error", 1)
+    assert "pipetree raised RuntimeError('boom')" in div.detail
+
+    rec = merge_harness.record_case(spark, case)
+    assert rec.error == (1, "pipetree raised RuntimeError('boom')")
+    assert len(rec.snapshots) == 1  # the batch before the failure was recorded
+    (recorded,) = merge_harness.compare_recording(case, rec)
+    assert (recorded.kind, recorded.batch_index) == ("error", 1)
+
+
+def test_a_raising_idempotence_rerun_is_reported_as_an_error_divergence(spark, monkeypatch):
+    _failing_run_table(monkeypatch, on_execution_id=3)  # the re-run of batch 2 has id 2 + 2
+    case = _case("scd1", [[_row(1)], [_row(2)]], sequence_by=())
+
+    (div,) = run_case(spark, case)
+    assert (div.kind, div.batch_index, div.rerun) == ("error", 1, True)
+    assert "re-run raised RuntimeError('boom')" in div.detail
+
+    rec = merge_harness.record_case(spark, case)
+    assert rec.error == (1, "idempotence re-run raised RuntimeError('boom')")
+    assert rec.rerun is None
+
+
+def test_a_recorded_case_compares_offline_like_a_live_run(spark):
+    case = SMOKE["scd2"][0]
+    rec = merge_harness.record_case(spark, case)
+    assert rec.error is None and rec.rerun is not None
+    assert len(rec.snapshots) == len(case.batches) == len(rec.results)
+    assert merge_harness.compare_recording(case, rec, QuirkModel(SMOKE["scd2"][1])) == run_case(
+        spark, case, model=QuirkModel(SMOKE["scd2"][1])
+    )
+
+
+def test_run_many_runs_every_seed_of_a_strategy(spark, monkeypatch):
+    seen = []
+
+    def fake_generate(seed, strategy):
+        seen.append((seed, strategy))
+        return _case("scd1", [[_row(seed)]], sequence_by=())
+
+    monkeypatch.setattr(merge_harness, "generate_case", fake_generate)
+    assert merge_harness.run_many(spark, "scd1", [3, 4]) == []
+    assert seen == [(3, "scd1"), (4, "scd1")]
