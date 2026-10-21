@@ -152,12 +152,16 @@ patch version. The changelog is generated with
    ```
 
    Edit `CHANGELOG.md` by hand where a commit message reads badly for users.
-3. Open a PR titled `chore(release): vX.Y.Z` and merge it once checks pass.
-4. Tag the merge commit and push the tag:
+3. Open a PR titled `chore(release): ...` (git-cliff leaves such commits out of the
+   changelog) and merge it once checks pass. Merge it last: whatever lands on `main`
+   afterwards is missing from `CHANGELOG.md`, while the release notes (generated from
+   the history at the tag) would contain it.
+4. Tag the merge commit and push the tag. Signing is optional, a signed tag shows as
+   "Verified" on GitHub:
 
    ```bash
    git switch main && git pull
-   git tag vX.Y.Z
+   git tag -s vX.Y.Z -m "pipetree X.Y.Z"    # or: git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
 
@@ -166,7 +170,24 @@ patch version. The changelog is generated with
    GitHub Release with the notes from `uvx git-cliff --latest --strip header`.
    The workflow refuses to run if the tag, `pyproject.toml` and `__version__`
    disagree. A manual run of the workflow (Actions tab, `Release`, "Run
-   workflow") publishes to TestPyPI only.
+   workflow") publishes to TestPyPI only; TestPyPI takes a file name once, so a
+   second run with the same version is skipped.
+
+   Every entry of the notes and of `CHANGELOG.md` carries its pull request and its
+   author ("by @user", from the GitHub API: the release job gives git-cliff the
+   token).
+
+**Pre-releases.** A tag with `a`, `b` or `rc` after the number (`v0.2.0rc1`, the
+version in `pyproject.toml` and `__version__` must be the same PEP 440 string
+`0.2.0rc1`) is published as a pre-release on PyPI and on GitHub (never "Latest"). Its
+notes cover the changes since the tag before it, the notes of the final version those
+since the previous final version.
+
+**Immutable releases** are enabled for the repository: once a GitHub Release is
+published, its assets and its tag can no longer be changed, and the release cannot be
+deleted. Its title and notes stay editable (`gh release edit vX.Y.Z --notes-file ...`).
+PyPI files are immutable anyway. A mistake in the files is fixed with a new version
+(`X.Y.Z+1`).
 
 ### One-time setup checklist
 

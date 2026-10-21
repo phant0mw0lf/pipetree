@@ -30,7 +30,7 @@ With both `--with-*` flags the dependents are added first, then the ancestors of
 
 ## Failures
 
-- A transient error (throttling, timeout, connection reset) is retried up to 3 attempts in total, with exponential backoff and jitter. Other errors are not retried. A retried `append` first deletes the rows of this run.
+- A transient error (throttling, timeout, connection reset) is retried up to 3 attempts in total, with exponential backoff and jitter. Other errors are not retried. A retried `append` first deletes the rows of this run; if that delete fails, the table fails without a retry and the run goes on.
 - A table that fails ends as `failed`. Every table downstream of it ends as `upstream_failed` and never starts.
 - Independent branches keep running.
 
