@@ -29,6 +29,7 @@ from pyspark.sql.types import (
     FloatType,
     IntegralType,
     LongType,
+    MapType,
     NumericType,
     StringType,
     StructField,
@@ -184,7 +185,9 @@ def merge_scd1(
     snapshot_deleted = _snapshot_missing(spark, table, prepared)[1]
 
     key_cond = _key_condition(table)
-    change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
+    change_cond = _change_condition_sql(
+        columns, table, reconciliation.target_columns, _map_columns(prepared)
+    )
     # sequence_by across batches: an incoming row older than the stored one is ignored.
     not_older = _not_older_sql(table, reconciliation.target_columns)
     insert_values = _column_mapping(columns, insert_audit_values(execution_id, source_system, now))
@@ -328,7 +331,9 @@ def merge_scd2(
     new_versions_schema = not_deleted.select(*columns).schema
 
     key_cond = _key_condition(table) + " AND target._is_current = true"
-    change_cond = _change_condition_sql(columns, table, reconciliation.target_columns)
+    change_cond = _change_condition_sql(
+        columns, table, reconciliation.target_columns, _map_columns(not_deleted)
+    )
     close_for_delete: dict[str, str | Column] = {
         **update_audit_values(execution_id, source_system, now),
         **scd2_close_values(now),
@@ -1002,15 +1007,36 @@ def _not_older_sql(table: Table, existing_columns: frozenset[str] | None = None)
     return expr
 
 
+def _map_columns(df: DataFrame) -> frozenset[str]:
+    """Columns of MAP type. Spark defines no equality (and so no `<=>`) for maps; a map is
+    compared through `array_sort(map_entries(...))`, which is order-independent and null-safe."""
+    return frozenset(f.name for f in df.schema.fields if isinstance(f.dataType, MapType))
+
+
+def _comparable_sql(side: str, column: str, is_map: bool) -> str:
+    return f"array_sort(map_entries({side}.{column}))" if is_map else f"{side}.{column}"
+
+
+def _comparable_col(df: DataFrame, column: str, is_map: bool) -> Column:
+    return F.array_sort(F.map_entries(df[column])) if is_map else df[column]
+
+
 def _change_condition_sql(
-    columns: list, table: Table, existing_columns: frozenset[str] | None = None
+    columns: list,
+    table: Table,
+    existing_columns: frozenset[str] | None = None,
+    map_columns: frozenset[str] = frozenset(),
 ) -> str:
     compare_cols = _comparable_columns(columns, table, existing_columns)
     if not compare_cols:
         # No tracked column: nothing can be a tracked change (an ignored-only
         # change is handled by `_ignored_change_update`).
         return "false"
-    same = " AND ".join(f"target.{c} <=> source.{c}" for c in compare_cols)
+    same = " AND ".join(
+        f"{_comparable_sql('target', c, c in map_columns)}"
+        f" <=> {_comparable_sql('source', c, c in map_columns)}"
+        for c in compare_cols
+    )
     return f"NOT ({same})"
 
 
@@ -1031,7 +1057,13 @@ def _rows_that_changed(
         # No tracked column: never a tracked change (matches `_change_condition_sql`).
         return joined.filter(F.lit(False)).select(*[source_df[c] for c in columns])
 
-    conditions = [~source_df[col].eqNullSafe(current_df[col]) for col in compare_cols]
+    maps = _map_columns(source_df)
+    conditions = [
+        ~_comparable_col(source_df, col, col in maps).eqNullSafe(
+            _comparable_col(current_df, col, col in maps)
+        )
+        for col in compare_cols
+    ]
     diff = reduce(operator.or_, conditions)
 
     return joined.filter(diff).select(*[source_df[c] for c in columns])

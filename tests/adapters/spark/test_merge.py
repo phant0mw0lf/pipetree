@@ -1461,3 +1461,46 @@ def test_a_data_row_with_a_higher_sequence_still_beats_a_delete(spark):
     written = rows(spark.table(table.fqn))[1]
     assert written["name"] == "new"
     assert written["_is_deleted"] is False
+
+
+# --- MAP columns: Spark has no equality for maps, change detection must not use `<=>` on them ---
+
+MAP_SCHEMA = "id INT, tags MAP<STRING, STRING>"
+
+
+def test_scd1_leaves_a_row_alone_when_only_the_map_key_order_differs(spark):
+    table = make_table("tagged1", "scd1")
+    first = spark.createDataFrame([(1, {"a": "1", "b": "2"})], MAP_SCHEMA)
+    merge_scd1(spark, table, first, 1, "crm")
+    first_updated_at = rows(spark.table(table.fqn))[1]["_updated_at"]
+
+    reordered = spark.createDataFrame([(1, {"b": "2", "a": "1"})], MAP_SCHEMA)
+    merge_scd1(spark, table, reordered, 2, "crm")
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["_updated_at"] == first_updated_at
+    assert written["_execution_id"] == 1
+
+
+def test_scd1_updates_a_row_when_a_map_value_changes(spark):
+    table = make_table("tagged2", "scd1")
+    merge_scd1(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 1, "crm")
+
+    merge_scd1(spark, table, spark.createDataFrame([(1, {"env": "prd"})], MAP_SCHEMA), 2, "crm")
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["tags"] == {"env": "prd"}
+    assert written["_execution_id"] == 2
+
+
+def test_scd2_opens_a_version_when_a_map_value_changes(spark):
+    table = make_table("tagged3", "scd2")
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 1, "crm")
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 2, "crm")
+    assert spark.table(table.fqn).count() == 1  # identical map: no new version
+
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "prd"})], MAP_SCHEMA), 3, "crm")
+
+    versions = spark.table(table.fqn)
+    assert versions.count() == 2
+    assert versions.filter("_is_current = true").first()["tags"] == {"env": "prd"}
