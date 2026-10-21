@@ -27,6 +27,7 @@ from pipetree.adapters.spark.merge import (
     seed_unknown_member,
     strip_reserved_columns,
 )
+from pipetree.adapters.spark.transient import _translate
 from pipetree.model import System, Table
 from pipetree.platform.base import Platform
 from pipetree.platform.local import LocalPlatform
@@ -69,6 +70,27 @@ class SparkAdapter:
     def run_table(
         self, table: Table, *, execution_id: int, init: bool = False
     ) -> dict[str, Any] | None:
+        # Engine errors reach the executor as Throttled / TimeoutError /
+        # ConnectionError when they are transient (see transient.py), and
+        # unchanged otherwise. The original stays as __cause__.
+        try:
+            return self._run_table(table, execution_id=execution_id, init=init)
+        except Exception as exc:
+            if (translated := _translate(exc)) is None:
+                raise
+            raise translated from exc
+
+    def delete_by_execution_id(self, table: Table, execution_id: int) -> None:
+        try:
+            self._delete_by_execution_id(table, execution_id)
+        except Exception as exc:
+            if (translated := _translate(exc)) is None:
+                raise
+            raise translated from exc
+
+    def _run_table(
+        self, table: Table, *, execution_id: int, init: bool = False
+    ) -> dict[str, Any] | None:
         if table.source is not None:
             system = self._systems[table.source.system]
             if self._read_source_override is not None:
@@ -96,7 +118,7 @@ class SparkAdapter:
 
         return result
 
-    def delete_by_execution_id(self, table: Table, execution_id: int) -> None:
+    def _delete_by_execution_id(self, table: Table, execution_id: int) -> None:
         if not self._spark.catalog.tableExists(table.fqn):
             return
         DeltaTable.forName(self._spark, table.fqn).delete(f"_execution_id = {execution_id}")
