@@ -24,3 +24,7 @@ examples/**/_output/
 
 .DS_Store
 coverage.xml
+
+# local planning notes, never committed
+docs/superpowers/
+.superpowers/
