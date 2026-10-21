@@ -207,3 +207,22 @@ def test_execution_id_is_generated_when_not_given():
 
     assert digest.execution_id > 0
     assert str(digest.execution_id) != "1"  # sanity: it's a real generated timestamp, not a stub
+
+
+def test_a_table_downstream_of_two_failed_tables_is_marked_upstream_failed_once():
+    graph = make_graph(
+        {"bronze.a": "scd1", "bronze.b": "scd1", "silver.c": "replace"},
+        edges={"silver.c": {"bronze.a", "bronze.b"}},
+    )
+    adapter = FakeAdapter(
+        behaviors={
+            "bronze.a": AlwaysFails(exc_factory=lambda: ValueError("boom a")),
+            "bronze.b": AlwaysFails(exc_factory=lambda: ValueError("boom b")),
+        }
+    )
+
+    digest = run_pipeline(graph, adapter, execution_id=1, retry_policy=FAST_RETRY)
+
+    assert digest.results["silver.c"].status == TableStatus.UPSTREAM_FAILED
+    assert digest.results["silver.c"].details["failed_ancestor"] in {"bronze.a", "bronze.b"}
+    assert "silver.c" not in adapter.calls

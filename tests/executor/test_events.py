@@ -4,7 +4,7 @@ import contextlib
 import logging
 import threading
 
-from pipetree.executor.events import ProgressStatus, TableEvent
+from pipetree.executor.events import ObserverDispatcher, ProgressStatus, TableEvent
 from pipetree.executor.retry import RetryPolicy, Throttled
 from pipetree.executor.runner import run_pipeline
 from pipetree.executor.status import RunDigest, TableStatus
@@ -305,3 +305,30 @@ def test_no_observer_still_runs_exactly_as_before():
     digest = run_pipeline(chain_graph(), FakeAdapter(), execution_id=1)
 
     assert digest.succeeded
+
+
+def test_dispatcher_is_active_only_with_observers():
+    assert ObserverDispatcher([RecordingObserver()]).active
+    assert not ObserverDispatcher([]).active
+
+
+def test_an_observer_disabled_during_a_delivery_is_skipped_for_the_rest_of_it():
+    class Disabler(RecordingObserver):
+        def __init__(self, victim: RecordingObserver) -> None:
+            super().__init__()
+            self.victim = victim
+            self.dispatcher: ObserverDispatcher | None = None
+
+        def on_table_event(self, event: TableEvent) -> None:
+            assert self.dispatcher is not None
+            self.dispatcher._observers.remove(self.victim)  # as if its failure disabled it
+
+    victim = RecordingObserver()
+    disabler = Disabler(victim)
+    dispatcher = ObserverDispatcher([disabler, victim])
+    disabler.dispatcher = dispatcher
+
+    dispatcher.post(TableEvent("bronze.a", ProgressStatus.RUNNING, 1))
+    dispatcher.drain()
+
+    assert victim.calls == []

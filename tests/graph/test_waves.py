@@ -1,3 +1,5 @@
+import dataclasses
+
 from pipetree.graph.waves import compute_waves, layer_of, layer_order, wave_columns
 
 from ..helpers import make_graph
@@ -78,3 +80,10 @@ def test_wave_columns_group_by_layer_then_name():
     )
 
     assert wave_columns(graph) == [["bronze.a", "bronze.z"], ["silver.b", "silver.m", "gold.k"]]
+
+
+def test_waves_ignore_a_reverse_edge_to_a_table_outside_the_graph():
+    base = make_graph({"bronze.a": "scd1"})
+    graph = dataclasses.replace(base, reverse_edges={"bronze.a": frozenset({"gold.ghost"})})
+
+    assert compute_waves(graph) == {"bronze.a": 0}

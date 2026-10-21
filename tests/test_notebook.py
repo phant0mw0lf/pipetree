@@ -16,6 +16,7 @@ from pipetree.notebook import (
     IPythonDisplayBackend,
     LiveGraphView,
     TextBackend,
+    _ThrottledGraphObserver,
     detect_backend,
 )
 
@@ -413,3 +414,104 @@ def test_summary_counts_tables_with_notes_only_when_there_are_any():
     )
 
     assert "⚠ 1 with notes" in view.summary()
+
+
+# --- coverage of the fallbacks ---------------------------------------------------
+
+
+def fake_ipython_display(shown: list[object], cleared: list[bool]) -> types.ModuleType:
+    module = types.ModuleType("IPython.display")
+    module.HTML = FakeHTML  # type: ignore[attr-defined]
+    module.display = lambda obj, display_id=None: shown.append(obj)  # type: ignore[attr-defined]
+    module.clear_output = lambda wait=False: cleared.append(wait)  # type: ignore[attr-defined]
+    return module
+
+
+def test_ipython_backend_imports_display_helpers_from_ipython_when_not_injected(monkeypatch):
+    shown: list[object] = []
+    cleared: list[bool] = []
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.display", fake_ipython_display(shown, cleared))
+
+    backend = IPythonDisplayBackend()
+    backend.update("a", "s", final=False)  # no handle from the fake display: fallback mode
+    backend.update("b", "s", final=True)
+
+    assert [h.data for h in shown] == ["a", "b"]  # type: ignore[attr-defined]
+    assert cleared == [True]
+
+
+def test_ipython_backend_redisplays_through_show_html_and_close_drops_the_handle():
+    shown: list[str] = []
+    html_calls: list[str] = []
+    backend = IPythonDisplayBackend(
+        display=lambda obj, display_id=None: FakeHandle(fail=True),
+        html=FakeHTML,
+        clear_output=lambda wait=False: None,
+        show_html=html_calls.append,
+    )
+    backend.update("a", "s", final=False)
+    backend.update("b", "s", final=True)  # in-place update fails -> clear + displayHTML
+
+    assert html_calls == ["b"]
+    assert shown == []
+    backend.close()
+    assert backend._handle is None
+
+
+def test_clear_output_backend_imports_display_helpers_from_ipython_when_not_injected(monkeypatch):
+    shown: list[object] = []
+    cleared: list[bool] = []
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.display", fake_ipython_display(shown, cleared))
+
+    backend = ClearOutputBackend()
+    backend.update("a", "s", final=False)
+    backend.close()
+
+    assert cleared == [True]
+    assert [h.data for h in shown] == ["a"]  # type: ignore[attr-defined]
+
+
+def test_text_backend_close_is_a_noop():
+    TextBackend().close()
+
+
+def test_summary_before_a_run_says_so():
+    assert LiveGraphView(backend=FakeBackend()).summary() == "no run yet"
+
+
+def test_the_throttled_observer_base_requires_an_emit_implementation():
+    observer = _ThrottledGraphObserver()
+    graph = chain_graph()
+    with pytest.raises(NotImplementedError):
+        observer.on_run_start(graph, frozenset(graph.tables), 1)
+
+
+def test_live_view_in_a_cell_evaluates_to_the_current_picture():
+    view, _, _ = started_view()
+
+    assert view._repr_html_() == view.html()
+    assert "bronze.a" in view._repr_html_()
+
+
+def test_html_file_observer_removes_its_temp_file_when_the_rename_fails(
+    tmp_path: Path, monkeypatch
+):
+    target = tmp_path / "run.html"
+    observer = HtmlFileObserver(target)
+
+    def broken_replace(src, dst):
+        raise OSError("disk says no")
+
+    monkeypatch.setattr("pipetree.notebook.os.replace", broken_replace)
+    graph = chain_graph()
+    with pytest.raises(OSError, match="disk says no"):
+        observer.on_run_start(graph, frozenset(graph.tables), 1)
+
+    assert list(tmp_path.iterdir()) == []
+    assert observer.writes == 0
+
+
+def test_html_file_observer_close_is_a_noop(tmp_path: Path):
+    HtmlFileObserver(tmp_path / "run.html").close()

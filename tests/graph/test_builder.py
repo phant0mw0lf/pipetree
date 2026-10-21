@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from pipetree.graph.builder import build_graph
-from pipetree.graph.errors import CycleError, DependencyParseError, UnresolvedDependencyError
+from pipetree.graph.errors import (
+    CycleError,
+    DependencyParseError,
+    GraphError,
+    UnresolvedDependencyError,
+)
 from pipetree.model import PipelineConfig
 
 BASE_RAW = {
@@ -350,3 +355,22 @@ def test_auto_does_not_count_a_cte_or_local_view_as_a_dependency(tmp_path: Path)
     assert build_graph(config, tmp_path).edges["gold.report"] == frozenset(
         {"silver.orders", "bronze.customer"}
     )
+
+
+def test_auto_without_a_logic_file_is_refused(tmp_path: Path):
+    config = config_with(
+        {
+            "bronze": {
+                "tables": {
+                    "customer": {
+                        "source": {"system": "crm", "object": "account"},
+                        "strategy": "scd1",
+                        "depends_on": "auto",
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(GraphError, match="depends_on: auto requires a 'logic' file"):
+        build_graph(config, tmp_path)
