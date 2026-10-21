@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from sqlglot.errors import OptimizeError
 
 from pipetree.graph.errors import DependencyParseError
 from pipetree.graph.parsers import (
@@ -100,3 +101,57 @@ def test_parse_logic_dependencies_rejects_unknown_extension(tmp_path: Path):
 
     with pytest.raises(ValueError):
         parse_logic_dependencies(path)
+
+
+def test_parse_sql_dependencies_skips_maintenance_commands():
+    assert parse_sql_dependencies("VACUUM bronze.orders; OPTIMIZE bronze.orders") == set()
+
+
+def test_parse_sql_dependencies_reads_a_deep_clone_source():
+    sql = "CREATE OR REPLACE TABLE silver.copy DEEP CLONE bronze.orders"
+
+    assert parse_sql_dependencies(sql) == {"silver.copy", "bronze.orders"}
+
+
+def test_parse_sql_dependencies_refuses_a_create_it_cannot_analyse():
+    with pytest.raises(DependencyParseError, match="cannot analyse the CREATE statement"):
+        parse_sql_dependencies("CREATE DEEP CLONE x", file="gold/x.sql")
+
+
+def test_parse_sql_dependencies_reads_no_table_from_schema_and_function_ddl():
+    sql = "CREATE SCHEMA s; CREATE FUNCTION f AS 'com.example.F'"
+
+    assert parse_sql_dependencies(sql) == set()
+
+
+def test_parse_sql_dependencies_ignores_a_table_valued_function_outside_a_query():
+    sql = "MERGE INTO silver.t USING range(3) AS s ON t.a = s.id WHEN MATCHED THEN DELETE"
+
+    assert parse_sql_dependencies(sql) == {"silver.t"}
+
+
+def test_parse_sql_dependencies_does_not_count_a_cte_name_used_as_a_write_target():
+    sql = "WITH c AS (SELECT 1 AS a) INSERT INTO c SELECT 2"
+
+    assert parse_sql_dependencies(sql) == set()
+
+
+def test_parse_sql_dependencies_reports_an_analysis_failure_of_sqlglot(monkeypatch):
+    def broken(_statement):
+        raise OptimizeError("cannot resolve scope")
+
+    monkeypatch.setattr("pipetree.graph.parsers.traverse_scope", broken)
+
+    with pytest.raises(DependencyParseError, match="cannot analyse the SQL"):
+        parse_sql_dependencies("SELECT * FROM bronze.orders", file="gold/x.sql")
+
+
+@pytest.mark.parametrize("name", ["", "`", "x.y.z.w.v", "f(1)"])
+def test_parse_pyspark_dependencies_refuses_a_table_name_it_cannot_read(name: str):
+    with pytest.raises(DependencyParseError, match="cannot read the table name"):
+        parse_pyspark_dependencies(f"spark.table({name!r})", file="orders.py")
+
+
+def test_parse_pyspark_dependencies_refuses_a_table_call_without_a_name():
+    with pytest.raises(DependencyParseError, match="not a string literal"):
+        parse_pyspark_dependencies("df = spark.table()", file="orders.py")

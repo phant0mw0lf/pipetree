@@ -323,3 +323,143 @@ def test_a_wrong_audit_value_is_a_divergence_of_the_comparison():
     rec.snapshots[1] = [R(1, 1, src="elsewhere")]
     got = compare_recording(case, rec)
     assert [d.kind for d in got] == ["invariant"] and "[source_system_value]" in got[0].detail
+
+
+# ------------------------------------------------- reporting and edge branches
+
+
+def _one_row_case(strategy="scd1"):
+    row = {"id": 1, "v": "a", "w": None, "seq": None, "op": "U"}
+    t = ModelTable(strategy=strategy, key=("id",), columns=COLS)
+    return Case(-1, t, None, None, [[row]], frozenset())
+
+
+def _clean_recording(**kw):
+    return Recording(
+        snapshots=[_snap([(1, "a", 0, 1)])], results=[{"duplicates_dropped": 0}], rerun=None, **kw
+    )
+
+
+def test_a_rerun_divergence_names_the_rerun_and_its_execution_id():
+    from pipetree.testing.merge_harness import Divergence
+
+    case = _one_row_case()
+    text = str(Divergence(case, 0, "rows", "detail", rerun=True))
+    assert "idempotence re-run of batch 0 (execution_id 2)" in text
+    assert "batch 0, execution_id 1" not in text
+    assert "batch 0, execution_id 1" in str(Divergence(case, 0, "rows", "detail"))
+
+
+def test_normalise_reads_the_rows_of_a_dataframe_in_canonical_order():
+    from pipetree.testing.merge_harness import normalise
+
+    class _Row:
+        def __init__(self, d):
+            self.d = d
+
+        def asDict(self):
+            return self.d
+
+    class _Df:
+        def collect(self):
+            return [_Row(r) for r in reversed(_snap([(1, "a", 0, 1), (2, "b", 0, 1)]))]
+
+    case = _one_row_case()
+    assert [r["id"] for r in normalise(_Df(), case.table)] == [1, 2]
+
+
+def test_a_clean_recording_has_no_divergence_and_wrong_stats_are_reported():
+    case = _one_row_case()
+    assert compare_recording(case, _clean_recording()) == []
+    rec = Recording(
+        snapshots=[_snap([(1, "a", 0, 1)])],
+        results=[{"duplicates_dropped": 5, "snapshot_deleted": 3}],
+        rerun=None,
+    )
+    (div,) = compare_recording(case, rec)
+    assert div.kind == "stats"
+    assert "duplicates_dropped: model 0, table 5" in div.detail
+    assert "snapshot_deleted: model 0, table 3" in div.detail
+
+
+def test_a_recorded_error_is_a_divergence_after_the_batches_that_ran():
+    case = _one_row_case()
+    rec = _clean_recording(error=(1, "pipetree raised ValueError('x')"))
+    (div,) = compare_recording(case, rec)
+    assert (div.kind, div.batch_index, div.detail) == (
+        "error",
+        1,
+        "pipetree raised ValueError('x')",
+    )
+
+
+def test_a_rerun_that_changes_a_timestamp_is_an_idempotence_problem():
+    case = _one_row_case()
+    after = _snap([(1, "a", 0, 1)])
+    after[0]["_updated_at"] += 1  # not compared with the model, but the table must not change
+    rec = Recording(
+        snapshots=[_snap([(1, "a", 0, 1)])],
+        results=[{"duplicates_dropped": 0}],
+        rerun=after,
+    )
+    (div,) = compare_recording(case, rec)
+    assert (div.kind, div.rerun) == ("invariant", True)
+    assert "[idempotence] re-running the last batch changed the table" in div.detail
+
+
+def test_state_from_table_orders_scd2_versions_by_valid_from():
+    from pipetree.testing.merge_harness import state_from_table
+
+    t = ModelTable(strategy="scd2", key=("id",), columns=COLS)
+    closed, current = S(1, 1, closed_by=2), S(1, 2)
+    state = state_from_table([current, closed], t)
+    assert [r["_is_current"] for r in state] == [False, True]
+
+
+def _unknown_case(strategy="append", *, surrogate_key=None):
+    t = ModelTable(
+        strategy=strategy,
+        key=("id",),
+        columns=COLS,
+        unknown_member=True,
+        sentinels={"id": -1},
+    )
+    return Case(-1, t, None, surrogate_key, [[], []], frozenset())
+
+
+def _plain(id, v="a", sid=None):
+    row = {"id": id, "v": v, "w": None, "seq": None, "op": "U"}
+    return row | ({"sid": sid} if sid is not None else {})
+
+
+def test_a_duplicated_or_changed_unknown_member_is_reported():
+    case = _unknown_case()
+    twice = [_plain(-1), _plain(-1)]
+    assert "unknown_member_once" in names(check_invariants(case, 0, None, twice, {}))
+    assert "unknown_member_unchanged" in names(
+        check_invariants(case, 1, [_plain(-1)], [_plain(-1, "changed")], {})
+    )
+    assert check_invariants(case, 1, [_plain(-1)], [_plain(-1)], {}) == []
+
+
+def test_the_unknown_member_sid_and_the_generated_sid_range_are_checked():
+    case = _unknown_case(surrogate_key="sid")
+    raw = [_plain(-1, sid=7), _plain(1, sid=0)]
+    got = names(check_invariants(case, 0, None, raw, {}))
+    assert {"sid_unknown_member", "sid_range"} <= got
+    assert check_invariants(case, 0, None, [_plain(-1, sid=-1), _plain(1, sid=1)], {}) == []
+
+
+def test_scd2_version_with_valid_to_before_valid_from_or_a_current_delete_is_reported():
+    before = [V(1, 20, 10, cur=False, deleted=True)]
+    assert "scd2_valid_to_before_from" in names(
+        check_invariants(_case("scd2"), 0, None, before, {})
+    )
+    current_deleted = [V(1, 10, None, cur=True, deleted=True)]
+    got = names(check_invariants(_case("scd2"), 0, None, current_deleted, {}))
+    assert "scd2_current_deleted" in got
+
+
+def test_a_closed_scd2_version_that_did_not_start_at_its_insertion_is_reported():
+    row = S(1, 2, closed_by=3, vf=1)  # inserted by batch 2 but valid from batch 1, not empty
+    assert "scd2_valid_from_value" in audit("scd2", 2, None, [row])

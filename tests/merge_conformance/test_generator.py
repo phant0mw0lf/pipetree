@@ -310,3 +310,8 @@ def test_coverage_detects_snapshot_missing_key_and_return():
     )
     ign = replace(t, has_delete=True, delete_mode="ignore")
     assert not SNAPSHOT_NAMES & coverage(case([[r(1), r(2)], [r(2)], [r(1), r(2)]], ign))
+
+
+def test_an_unknown_strategy_is_rejected():
+    with pytest.raises(ValueError, match="unknown strategy"):
+        generate_case(0, "merge")

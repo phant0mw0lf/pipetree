@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from pipetree.config.errors import ConfigError
-from pipetree.config.loader import load_config
+from pipetree.config.loader import load_config, validate_raw
 
 MINIMAL_VALID = """
 defaults:
@@ -477,3 +477,80 @@ def test_replace_and_append_need_no_business_key(strategy: str):
     del raw["bronze"]["tables"]["customer"]["business_key"]
 
     validate_raw(raw)
+
+
+# ---------------------------------------------------- structural error branches
+
+
+def _table(**overrides):
+    table = {"logic": "x.sql", "strategy": "replace"}
+    table.update(overrides)
+    return {"silver": {"tables": {"t": table}}}
+
+
+def _sourced_table(source):
+    return {"silver": {"tables": {"t": {"source": source, "strategy": "replace"}}}}
+
+
+@pytest.mark.parametrize(
+    ("raw", "path", "reason"),
+    [
+        (["not", "a", "mapping"], "<root>", "config must be a mapping"),
+        (
+            {"systems": ["crm"]},
+            "systems",
+            "must be a mapping of system name to config",
+        ),
+        (
+            {"systems": {"crm": "synapse_link"}},
+            "systems.crm",
+            "must be a mapping with a 'type' key",
+        ),
+        (
+            {"systems": {"crm": {"path": "x"}}},
+            "systems.crm",
+            "must be a mapping with a 'type' key",
+        ),
+        (
+            {"silver": ["t"]},
+            "silver",
+            "a layer must be a mapping with a 'tables' key",
+        ),
+        (
+            {"silver": {"tables": ["t"]}},
+            "silver.tables",
+            "must be a mapping of table name to table config",
+        ),
+        ({"silver": {"tables": {"t": "x.sql"}}}, "silver.tables.t", "must be a mapping"),
+        (
+            _sourced_table("crm.account"),
+            "silver.tables.t.source",
+            "must have 'system' and 'object'",
+        ),
+        (
+            _sourced_table({"system": "crm"}),
+            "silver.tables.t.source",
+            "must have 'system' and 'object'",
+        ),
+        (_table(merge="soft"), "silver.tables.t.merge", "must be a mapping"),
+        (
+            _table(strategy="scd1", business_key=["id"], merge={"snapshot": "yes"}),
+            "silver.tables.t.merge.snapshot",
+            "must be true or false",
+        ),
+        (
+            _table(
+                strategy="scd1",
+                business_key=["id"],
+                merge={"snapshot": True, "snapshot_allow_empty": "yes"},
+            ),
+            "silver.tables.t.merge.snapshot_allow_empty",
+            "must be true or false",
+        ),
+    ],
+)
+def test_validate_raw_reports_the_path_and_reason_of_a_structural_error(raw, path, reason):
+    with pytest.raises(ConfigError) as exc_info:
+        validate_raw(raw)
+    assert exc_info.value.path == path
+    assert reason in exc_info.value.reason

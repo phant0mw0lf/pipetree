@@ -207,3 +207,21 @@ def test_rejects_an_unknown_auth_mode():
 
     with pytest.raises(ValueError, match="auth.mode"):
         read(ctx)
+
+
+def test_raises_a_clear_error_when_the_table_has_no_source_block():
+    system = System.model_validate(
+        {
+            "type": "sqlserver",
+            "host": "sql.example.com",
+            "database": "hr",
+            "auth": {"user": "svc", "password": "pw"},
+        }
+    )
+    ctx = make_ctx(system)
+    ctx = SourceContext(
+        ctx.spark, ctx.table.model_copy(update={"source": None}), system, LocalPlatform(), Path(".")
+    )
+
+    with pytest.raises(ValueError, match="needs a 'source' block"):
+        read(ctx)

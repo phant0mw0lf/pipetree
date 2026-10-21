@@ -146,6 +146,36 @@ def test_run_table_raises_a_clear_error_for_an_unsupported_system_type(spark, tm
         adapter.run_table(table, execution_id=1)
 
 
+def test_a_custom_system_without_a_class_raises_a_clear_error(spark, tmp_path):
+    system = System.model_validate({"type": "custom"})
+    table = make_table(
+        source={"system": "graph", "object": "whatever"},
+        strategy="replace",
+        fqn="bronze_custom.noclass",
+    )
+    adapter = SparkAdapter(spark, systems={"graph": system}, base_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="requires a 'class' property"):
+        adapter.run_table(table, execution_id=1)
+
+
+def test_a_table_with_neither_source_nor_logic_raises_a_clear_error(spark, tmp_path):
+    table = make_table(strategy="replace", fqn="silver_none.x", source=None, logic=None)
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="no 'source' and no 'logic'"):
+        adapter.run_table(table, execution_id=1)
+
+
+def test_a_logic_file_with_an_unknown_extension_raises_a_clear_error(spark, tmp_path):
+    (tmp_path / "silver.txt").write_text("SELECT 1")
+    table = make_table(logic="silver.txt", strategy="replace", fqn="silver_txt.x", source=None)
+    adapter = SparkAdapter(spark, systems={}, base_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="don't know how to run a '.txt' logic file"):
+        adapter.run_table(table, execution_id=1)
+
+
 def test_run_table_executes_a_sql_logic_file(spark, tmp_path):
     spark.sql("CREATE SCHEMA IF NOT EXISTS bronze_c")
     spark.createDataFrame([(1, "Alice")], ["id", "name"]).write.format("delta").mode(

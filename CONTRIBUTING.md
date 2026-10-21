@@ -71,8 +71,11 @@ Pull requests run these jobs (`.github/workflows/ci.yml`):
   has a result on every pull request.
 
 The required status checks are `test`, `pr-title` and `zizmor`. Codecov adds
-`codecov/patch` (new lines should be at least 80% covered) and
-`codecov/project` (total coverage must not drop by more than 1%).
+`codecov/patch` and `codecov/project`. Line coverage of `src/pipetree` is
+100%: the Python 3.12 test run fails below it (`--cov-fail-under=100`), and
+Codecov wants every new line covered. Check it locally with
+`uv run pytest --cov --cov-report=term-missing`. A `# pragma: no cover` needs
+a comment that says why the line cannot run in the test environment.
 
 The full merge-conformance run (300 seeds per strategy, all four strategies)
 is too slow for every pull request. The `Conformance` workflow

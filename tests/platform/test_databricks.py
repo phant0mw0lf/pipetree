@@ -272,3 +272,27 @@ def test_can_acquire_token_reports_configured_resources():
     )
     assert platform.can_acquire_token("https://communication.azure.com")
     assert not platform.can_acquire_token("https://database.windows.net")
+
+
+def test_create_secret_client_builds_the_key_vault_client(monkeypatch: pytest.MonkeyPatch):
+    import sys
+    import types
+
+    class FakeSdkSecretClient:
+        def __init__(self, vault_url: str, credential: Any) -> None:
+            self.vault_url = vault_url
+            self.credential = credential
+
+    keyvault = types.ModuleType("azure.keyvault")
+    secrets = types.ModuleType("azure.keyvault.secrets")
+    secrets.SecretClient = FakeSdkSecretClient  # type: ignore[attr-defined]
+    keyvault.secrets = secrets  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "azure.keyvault", keyvault)
+    monkeypatch.setitem(sys.modules, "azure.keyvault.secrets", secrets)
+    credential = object()
+
+    client = databricks_module._create_secret_client(VAULT, credential)
+
+    assert isinstance(client, FakeSdkSecretClient)
+    assert client.vault_url == VAULT
+    assert client.credential is credential

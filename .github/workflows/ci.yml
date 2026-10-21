@@ -149,7 +149,9 @@ jobs:
           # workflow runs seeds 0-299. The fixed regression corpus
           # and the hand-built cases run regardless.
           PIPETREE_CONFORMANCE_SEEDS: ${{ needs.changes.outputs.merge == 'true' && matrix.python == '3.12' && 'pr' || '5' }}
-        run: uv run pytest --cov --cov-report=xml -n 4 --maxfail=5 -rs --durations=25 -v
+        # Line coverage of src/pipetree stays at 100 %: the 3.12 run fails below it.
+        # The other Python versions only report.
+        run: uv run pytest --cov --cov-report=xml ${{ matrix.python == '3.12' && '--cov-fail-under=100' || '' }} -n 4 --maxfail=5 -rs --durations=25 -v
 
       # Runs only when the tests ran (this job is skipped otherwise). Pull
       # requests from forks get no secret: the token is then empty and the action

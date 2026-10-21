@@ -303,3 +303,63 @@ def test_mail_shows_the_requested_tags_and_the_input_not_refreshed_note():
 
 def test_no_tags_line_without_a_tag_filter():
     assert "Tags:" not in acs_email.format_text(failed_digest(), RunContext())
+
+
+def test_create_email_client_builds_the_sdk_client(monkeypatch: pytest.MonkeyPatch):
+    import sys
+    import types
+
+    class FakeSdkClient:
+        def __init__(self, endpoint: str, credential: Any) -> None:
+            self.endpoint = endpoint
+            self.credential = credential
+
+    module = types.ModuleType("azure.communication.email")
+    module.EmailClient = FakeSdkClient  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "azure.communication.email", module)
+    credential = object()
+
+    created = acs_email._create_email_client("https://acs.communication.azure.com", credential)
+
+    assert isinstance(created, FakeSdkClient)
+    assert created.endpoint == "https://acs.communication.azure.com"
+    assert created.credential is credential
+
+
+def test_sdk_available_reflects_whether_the_package_is_installed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(acs_email.importlib.util, "find_spec", lambda name: object())
+    assert acs_email._sdk_available() is True
+
+    monkeypatch.setattr(acs_email.importlib.util, "find_spec", lambda name: None)
+    assert acs_email._sdk_available() is False
+
+
+def test_sdk_available_is_false_when_the_parent_package_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def missing_parent(name: str) -> None:
+        raise ModuleNotFoundError(f"No module named {name.split('.')[0]!r}")
+
+    monkeypatch.setattr(acs_email.importlib.util, "find_spec", missing_parent)
+
+    assert acs_email._sdk_available() is False
+
+
+def test_counts_include_skipped_tables():
+    digest = RunDigest(
+        execution_id=5,
+        results={
+            "a.x": result("a.x", TableStatus.FAILED, error_type="E", error_message="m"),
+            "a.y": result("a.y", TableStatus.SKIPPED, attempts=0),
+        },
+    )
+    assert "1 failed, 0 upstream_failed, 0 succeeded, 1 skipped" in acs_email.format_text(
+        digest, RunContext()
+    )
+
+
+def test_selection_names_with_ancestors_in_text_and_html():
+    ctx = RunContext(with_ancestors=True)
+
+    assert "with ancestors" in acs_email.format_text(failed_digest(), ctx)
+    assert "Selection: all tables (with ancestors)" in acs_email.format_html(failed_digest(), ctx)

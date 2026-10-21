@@ -71,3 +71,22 @@ def test_acquire_token_scopes_the_request_to_default():
     platform.acquire_token("https://database.windows.net/")
 
     assert credential.requested_scopes == ["https://database.windows.net/.default"]
+
+
+def test_acquire_token_falls_back_to_the_default_azure_credential(monkeypatch):
+    import sys
+    import types
+
+    scopes: list[str] = []
+
+    class FakeDefaultAzureCredential:
+        def get_token(self, scope: str) -> SimpleNamespace:
+            scopes.append(scope)
+            return SimpleNamespace(token="default-token")
+
+    module = types.ModuleType("azure.identity")
+    module.DefaultAzureCredential = FakeDefaultAzureCredential  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "azure.identity", module)
+
+    assert LocalPlatform().acquire_token("https://database.windows.net/") == "default-token"
+    assert scopes == ["https://database.windows.net/.default"]
