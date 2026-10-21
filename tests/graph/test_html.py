@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 from html.parser import HTMLParser
@@ -539,3 +540,27 @@ def test_snapshot_of_a_partial_run_with_tags():
     if os.environ.get("PIPETREE_UPDATE_SNAPSHOTS"):
         SNAPSHOT_TAGS.write_text(html, encoding="utf-8")
     assert SNAPSHOT_TAGS.read_text(encoding="utf-8") == html
+
+
+def test_max_rows_below_one_is_refused():
+    with pytest.raises(ValueError, match="max_rows"):
+        render_html(small_graph(), max_rows=0)
+
+
+def test_an_edge_from_a_parent_outside_the_graph_is_not_drawn():
+    base = make_graph({"bronze.a": "scd1", "silver.b": "replace"}, edges={"silver.b": {"bronze.a"}})
+    dangling = dataclasses.replace(
+        base, edges={**base.edges, "silver.b": frozenset({"bronze.a", "bronze.ghost"})}
+    )
+
+    html = render_html(dangling)
+
+    assert html.count('<path class="ptg-edge') == 1
+    assert 'data-from="bronze.a" data-to="silver.b"' in html
+    assert 'data-from="bronze.ghost"' not in html
+
+
+def test_elapsed_time_of_an_hour_or_more_shows_hours_and_minutes():
+    html = render_html(small_graph(), elapsed_s=3 * 3600 + 7 * 60 + 5)
+
+    assert "elapsed 3h 07m" in html

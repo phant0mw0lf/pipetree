@@ -130,3 +130,18 @@ def test_with_ancestors_of_a_source_table_is_just_itself():
     result = resolve_selection(graph, ["bronze.a"], with_dependents=False, with_ancestors=True)
 
     assert result == {"bronze.a"}
+
+
+def test_resolve_selection_with_dependents_visits_a_shared_descendant_once():
+    graph = make_graph(
+        {"bronze.a": "scd1", "silver.b": "replace", "silver.c": "replace", "gold.d": "replace"},
+        edges={
+            "silver.b": {"bronze.a"},
+            "silver.c": {"bronze.a"},
+            "gold.d": {"silver.b", "silver.c"},
+        },
+    )
+
+    result = resolve_selection(graph, ["bronze.a"], with_dependents=True)
+
+    assert result == {"bronze.a", "silver.b", "silver.c", "gold.d"}
