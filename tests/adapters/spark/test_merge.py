@@ -1461,3 +1461,169 @@ def test_a_data_row_with_a_higher_sequence_still_beats_a_delete(spark):
     written = rows(spark.table(table.fqn))[1]
     assert written["name"] == "new"
     assert written["_is_deleted"] is False
+
+
+# --- MAP columns: Spark has no equality for maps, change detection must not use `<=>` on them ---
+
+MAP_SCHEMA = "id INT, tags MAP<STRING, STRING>"
+
+
+def test_scd1_leaves_a_row_alone_when_only_the_map_key_order_differs(spark):
+    table = make_table("tagged1", "scd1")
+    first = spark.createDataFrame([(1, {"a": "1", "b": "2"})], MAP_SCHEMA)
+    merge_scd1(spark, table, first, 1, "crm")
+    first_updated_at = rows(spark.table(table.fqn))[1]["_updated_at"]
+
+    reordered = spark.createDataFrame([(1, {"b": "2", "a": "1"})], MAP_SCHEMA)
+    merge_scd1(spark, table, reordered, 2, "crm")
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["_updated_at"] == first_updated_at
+    assert written["_execution_id"] == 1
+
+
+def test_scd1_updates_a_row_when_a_map_value_changes(spark):
+    table = make_table("tagged2", "scd1")
+    merge_scd1(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 1, "crm")
+
+    merge_scd1(spark, table, spark.createDataFrame([(1, {"env": "prd"})], MAP_SCHEMA), 2, "crm")
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["tags"] == {"env": "prd"}
+    assert written["_execution_id"] == 2
+
+
+def test_scd2_opens_a_version_when_a_map_value_changes(spark):
+    table = make_table("tagged3", "scd2")
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 1, "crm")
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "dev"})], MAP_SCHEMA), 2, "crm")
+    assert spark.table(table.fqn).count() == 1  # identical map: no new version
+
+    merge_scd2(spark, table, spark.createDataFrame([(1, {"env": "prd"})], MAP_SCHEMA), 3, "crm")
+
+    versions = spark.table(table.fqn)
+    assert versions.count() == 2
+    assert versions.filter("_is_current = true").first()["tags"] == {"env": "prd"}
+
+
+# --- nested maps: the canonical form recurses (array_sort cannot order entries holding a map) ---
+
+NESTED_MAP_SCHEMA = "id INT, params MAP<STRING, MAP<STRING, STRING>>"
+
+
+def test_scd1_leaves_a_row_alone_when_only_nested_map_key_order_differs(spark):
+    table = make_table("nested1", "scd1")
+    first = spark.createDataFrame([(1, {"job": {"a": "1", "b": "2"}})], NESTED_MAP_SCHEMA)
+    merge_scd1(spark, table, first, 1, "crm")
+
+    reordered = spark.createDataFrame([(1, {"job": {"b": "2", "a": "1"}})], NESTED_MAP_SCHEMA)
+    merge_scd1(spark, table, reordered, 2, "crm")
+
+    assert rows(spark.table(table.fqn))[1]["_execution_id"] == 1
+
+
+def test_scd1_updates_a_row_when_a_nested_map_value_changes(spark):
+    table = make_table("nested2", "scd1")
+    dev = spark.createDataFrame([(1, {"job": {"env": "dev"}})], NESTED_MAP_SCHEMA)
+    merge_scd1(spark, table, dev, 1, "crm")
+
+    prd = spark.createDataFrame([(1, {"job": {"env": "prd"}})], NESTED_MAP_SCHEMA)
+    merge_scd1(spark, table, prd, 2, "crm")
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["params"] == {"job": {"env": "prd"}}
+    assert written["_execution_id"] == 2
+
+
+def test_scd2_opens_a_version_when_a_nested_map_value_changes(spark):
+    table = make_table("nested3", "scd2")
+    same = spark.createDataFrame([(1, {"job": {"env": "dev"}})], NESTED_MAP_SCHEMA)
+    merge_scd2(spark, table, same, 1, "crm")
+    merge_scd2(spark, table, same, 2, "crm")
+    assert spark.table(table.fqn).count() == 1
+
+    changed = spark.createDataFrame([(1, {"job": {"env": "prd"}})], NESTED_MAP_SCHEMA)
+    merge_scd2(spark, table, changed, 3, "crm")
+
+    versions = spark.table(table.fqn)
+    assert versions.count() == 2
+    assert versions.filter("_is_current = true").first()["params"] == {"job": {"env": "prd"}}
+
+
+MAP_IN_CONTAINERS_SCHEMA = (
+    "id INT, labels ARRAY<MAP<STRING, STRING>>, attrs STRUCT<tags: MAP<STRING, STRING>, n: INT>"
+)
+
+
+def test_scd1_compares_maps_inside_arrays_and_structs(spark):
+    table = make_table("nested4", "scd1")
+    first = spark.createDataFrame(
+        [(1, [{"a": "1", "b": "2"}], {"tags": {"x": "1", "y": "2"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd1(spark, table, first, 1, "crm")
+
+    reordered = spark.createDataFrame(
+        [(1, [{"b": "2", "a": "1"}], {"tags": {"y": "2", "x": "1"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd1(spark, table, reordered, 2, "crm")
+    assert rows(spark.table(table.fqn))[1]["_execution_id"] == 1
+
+    changed = spark.createDataFrame(
+        [(1, [{"a": "1", "b": "2"}], {"tags": {"x": "1", "y": "3"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd1(spark, table, changed, 3, "crm")
+    assert rows(spark.table(table.fqn))[1]["_execution_id"] == 3
+
+
+def test_scd1_treats_a_reordered_array_of_maps_as_a_change(spark):
+    # Array order is meaningful; only map key order is not.
+    table = make_table("nested5", "scd1")
+    first = spark.createDataFrame(
+        [(1, [{"a": "1"}, {"b": "2"}], {"tags": {}, "n": 1})], MAP_IN_CONTAINERS_SCHEMA
+    )
+    merge_scd1(spark, table, first, 1, "crm")
+
+    swapped = spark.createDataFrame(
+        [(1, [{"b": "2"}, {"a": "1"}], {"tags": {}, "n": 1})], MAP_IN_CONTAINERS_SCHEMA
+    )
+    merge_scd1(spark, table, swapped, 2, "crm")
+    assert rows(spark.table(table.fqn))[1]["_execution_id"] == 2
+
+
+def test_scd1_distinguishes_a_null_struct_from_a_struct_of_nulls(spark):
+    table = make_table("nested6", "scd1")
+    merge_scd1(
+        spark, table, spark.createDataFrame([(1, [], None)], MAP_IN_CONTAINERS_SCHEMA), 1, "crm"
+    )
+
+    nulls_inside = spark.createDataFrame(
+        [(1, [], {"tags": None, "n": None})], MAP_IN_CONTAINERS_SCHEMA
+    )
+    merge_scd1(spark, table, nulls_inside, 2, "crm")
+    assert rows(spark.table(table.fqn))[1]["_execution_id"] == 2
+
+
+def test_scd1_updates_an_ignored_map_column_in_place(spark):
+    table = make_table("nested7", "scd1", merge={"ignore_columns": ["params"]})
+    merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([(1, {"job": {"env": "dev"}})], NESTED_MAP_SCHEMA),
+        1,
+        "crm",
+    )
+
+    merge_scd1(
+        spark,
+        table,
+        spark.createDataFrame([(1, {"job": {"env": "prd"}})], NESTED_MAP_SCHEMA),
+        2,
+        "crm",
+    )
+
+    written = rows(spark.table(table.fqn))[1]
+    assert written["params"] == {"job": {"env": "prd"}}  # written in place
+    assert written["_execution_id"] == 1  # audit untouched: only an ignored column changed
