@@ -219,6 +219,22 @@ def test_unsupported_identity_columns_raise_a_clear_error(spark, monkeypatch):
     assert not spark.catalog.tableExists(table.fqn)
 
 
+def test_the_sql_route_is_tried_when_the_builder_route_fails(spark, monkeypatch):
+    def no_builder(*_args, **_kwargs):
+        raise RuntimeError("builder unavailable")
+
+    monkeypatch.setattr(merge_module, "_create_identity_table_with_builder", no_builder)
+    table = make_table("sqlroute1", "scd1")
+
+    try:
+        merge_scd1(spark, table, df(spark, [("A", "a")]), 1, "crm")
+    except SurrogateKeyError as exc:
+        # An engine whose catalog rejects the SQL DDL (OSS Delta): both routes are reported.
+        assert "builder unavailable" in str(exc)
+    else:
+        assert spark.table(table.fqn).count() == 1
+
+
 # ------------------------------------------------- through the adapter
 
 
