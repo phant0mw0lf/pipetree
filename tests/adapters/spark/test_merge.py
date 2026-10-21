@@ -673,6 +673,73 @@ def test_scd2_evolve_adds_a_new_column_and_records_the_drift(spark):
     assert any("added: email" in c for c in result["schema_changes"])
 
 
+def test_scd2_ignore_policy_drops_the_new_column_and_keeps_the_target_order(spark):
+    table = make_table("dim9_ignore", "scd2", schema_policy="ignore")
+    merge_scd2(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    merge_scd2(
+        spark,
+        table,
+        spark.createDataFrame([("Bob", "bob@example.com", 2)], ["name", "email", "id"]),
+        2,
+        "crm",
+    )
+
+    assert "email" not in spark.table(table.fqn).columns
+    assert rows(spark.table(table.fqn))[2]["name"] == "Bob"
+
+
+def test_scd2_evolve_with_a_changed_key_appends_the_new_version_with_the_new_column(spark):
+    table = make_table("dim9_version", "scd2")
+    merge_scd2(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
+
+    merge_scd2(
+        spark,
+        table,
+        spark.createDataFrame([(1, "Alicia", "a@example.com")], ["id", "name", "email"]),
+        2,
+        "crm",
+    )
+
+    versions = spark.table(table.fqn).orderBy("_valid_from", "name").collect()
+    assert [(v["name"], v["email"], v["_is_current"]) for v in versions] == [
+        ("Alice", None, False),
+        ("Alicia", "a@example.com", True),
+    ]
+
+
+def test_scd2_evolve_with_a_late_row_appends_the_late_version_with_the_new_column(spark):
+    table = make_table("dim9_late", "scd2", merge={"sequence_by": ["seq"]})
+    ddl = "id int, name string, seq int"
+    merge_scd2(spark, table, spark.createDataFrame([(1, "a", 1)], ddl), 1, "crm")
+    merge_scd2(spark, table, spark.createDataFrame([(1, "c", 3)], ddl), 2, "crm")
+
+    merge_scd2(
+        spark,
+        table,
+        spark.createDataFrame([(1, "b", 2, "b@example.com")], ddl + ", email string"),
+        3,
+        "crm",
+    )
+
+    versions = spark.table(table.fqn).collect()
+    assert sorted(v["name"] for v in versions) == ["a", "b", "c"]
+    assert {v["name"]: v["email"] for v in versions}["b"] == "b@example.com"
+    assert [v["name"] for v in versions if v["_is_current"]] == ["c"]
+
+
+def test_scd2_late_row_with_a_nan_value_equal_to_the_earlier_version_is_a_no_op(spark):
+    table = make_table("nan_value_scd2", "scd2", merge={"sequence_by": ["seq"]})
+    ddl = "id int, seq int, val double"
+    merge_scd2(spark, table, spark.createDataFrame([(1, 1, _NAN)], ddl), 1, "crm")
+    merge_scd2(spark, table, spark.createDataFrame([(1, 3, 5.0)], ddl), 2, "crm")
+
+    # seq 1 says NaN again, which is what the version valid at seq 1 already says (NaN = NaN)
+    merge_scd2(spark, table, spark.createDataFrame([(1, 1, _NAN)], ddl), 3, "crm")
+
+    assert spark.table(table.fqn).count() == 2
+
+
 def test_fail_policy_raises_and_never_writes_on_any_drift(spark):
     table = make_table("customer10", "scd1", schema_policy="fail")
     merge_scd1(spark, table, spark.createDataFrame([(1, "Alice")], ["id", "name"]), 1, "crm")
@@ -1593,6 +1660,29 @@ def test_scd1_treats_a_reordered_array_of_maps_as_a_change(spark):
     assert rows(spark.table(table.fqn))[1]["_execution_id"] == 2
 
 
+def test_scd2_compares_maps_inside_arrays_and_structs(spark):
+    table = make_table("nested4_scd2", "scd2")
+    first = spark.createDataFrame(
+        [(1, [{"a": "1", "b": "2"}], {"tags": {"x": "1", "y": "2"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd2(spark, table, first, 1, "crm")
+
+    reordered = spark.createDataFrame(
+        [(1, [{"b": "2", "a": "1"}], {"tags": {"y": "2", "x": "1"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd2(spark, table, reordered, 2, "crm")
+    assert spark.table(table.fqn).count() == 1  # only the map key order differs: no new version
+
+    changed = spark.createDataFrame(
+        [(1, [{"a": "1", "b": "2"}], {"tags": {"x": "1", "y": "3"}, "n": 1})],
+        MAP_IN_CONTAINERS_SCHEMA,
+    )
+    merge_scd2(spark, table, changed, 3, "crm")
+    assert spark.table(table.fqn).count() == 2
+
+
 def test_scd1_distinguishes_a_null_struct_from_a_struct_of_nulls(spark):
     table = make_table("nested6", "scd1")
     merge_scd1(
@@ -1627,3 +1717,23 @@ def test_scd1_updates_an_ignored_map_column_in_place(spark):
     written = rows(spark.table(table.fqn))[1]
     assert written["params"] == {"job": {"env": "prd"}}  # written in place
     assert written["_execution_id"] == 1  # audit untouched: only an ignored column changed
+
+
+# ------------------------------------------------------ seed_unknown_member guards
+
+
+def test_seed_unknown_member_is_a_no_op_when_the_table_does_not_ask_for_it(spark):
+    table = make_table("unk_off", "scd1")
+    merge_scd1(spark, table, spark.createDataFrame([(1, "a")], ["id", "name"]), 1, "crm")
+
+    seed_unknown_member(spark, table, execution_id=1)
+
+    assert spark.table(table.fqn).count() == 1
+
+
+def test_seed_unknown_member_is_a_no_op_when_the_table_does_not_exist_yet(spark):
+    table = make_table("unk_missing", "scd1", unknown_member=True)
+
+    seed_unknown_member(spark, table, execution_id=1)
+
+    assert not spark.catalog.tableExists(table.fqn)
