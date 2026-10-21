@@ -22,13 +22,18 @@ body = """
 - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
 {% if commit.breaking %}**BREAKING** {% endif %}\
 {{ commit.message | split(pat="\\n") | first | trim }}\
-{% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/phant0mw0lf/pipetree/pull/{{ commit.remote.pr_number }})){% endif %}
+{% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/phant0mw0lf/pipetree/pull/{{ commit.remote.pr_number }})){% endif %}\
+{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}
 {%- endfor %}
 {% endfor %}
 """
 footer = ""
 trim = true
 postprocessors = []
+
+[remote.github]
+owner = "phant0mw0lf"
+repo = "pipetree"
 
 [git]
 conventional_commits = true

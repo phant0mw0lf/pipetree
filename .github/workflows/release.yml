@@ -131,6 +131,8 @@ jobs:
       - name: Generate release notes
         env:
           TAG: ${{ github.ref_name }}
+          # git-cliff asks the GitHub API for the pull request number and the author ("by @user")
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eu
           pre='[0-9](a|b|rc)[0-9]+$'
