@@ -221,3 +221,11 @@ def test_rejects_an_unknown_auth_mode():
 
     with pytest.raises(ValueError, match="auth.mode"):
         read(ctx)
+
+
+def test_raises_a_clear_error_when_the_table_has_no_source_block():
+    table = make_table().model_copy(update={"source": None})
+    ctx = make_ctx(FakeSpark(), table, make_system())
+
+    with pytest.raises(ValueError, match="needs a 'source' block"):
+        read(ctx)

@@ -85,3 +85,48 @@ def test_raises_a_clear_error_when_format_is_missing(spark, tmp_path):
 
     with pytest.raises(ValueError, match="format"):
         StorageStreamSource().read(ctx)
+
+
+class _StopAfterReader(Exception):
+    pass
+
+
+class _RecordingStreamReader:
+    """A fake `spark.readStream` that records the reader calls and stops before any stream runs."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def format(self, name):
+        self.calls.append(("format", name))
+        return self
+
+    def option(self, key, value):
+        self.calls.append(("option", key, value))
+        return self
+
+    def load(self, path):
+        self.calls.append(("load", path))
+        raise _StopAfterReader
+
+
+class _DatabricksPlatform(LocalPlatform):
+    name = "databricks"
+
+
+def test_databricks_reads_with_auto_loader(tmp_path):
+    reader = _RecordingStreamReader()
+    spark = dataclasses.make_dataclass("FakeSpark", [("readStream", object)])(reader)
+    system = System.model_validate({"type": "storage_stream", "path": "landing", "format": "csv"})
+    ctx = SourceContext(spark, make_table(), system, _DatabricksPlatform(), tmp_path)
+
+    with pytest.raises(_StopAfterReader):
+        StorageStreamSource().read(ctx)
+
+    schema_location = str(tmp_path / "_checkpoints/bronze.events/schema")
+    assert reader.calls == [
+        ("format", "cloudFiles"),
+        ("option", "cloudFiles.format", "csv"),
+        ("option", "cloudFiles.schemaLocation", schema_location),
+        ("load", str(tmp_path / "landing")),
+    ]
