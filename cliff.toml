@@ -70,6 +70,7 @@ commit_parsers = [
     { sha = "a78fedd3aaf534e346bc28fb9ad0ecc6e51172d1", skip = true }, # feat: Phase D - the SourceReader registry
     { sha = "fb592ce8f84dc2dc54d694a1428ac66188608ae6", skip = true }, # feat: Phase E - schema inference and drift policies
     { sha = "addb345808a6824bd0f2a0c6c13593cc4fc19507", skip = true }, # feat: Phase F - AUTO CDC translation for declarative pipelin
+    { sha = "dd692c58d9d04e08e07ca810305e28207e6824a6", skip = true }, # chore: untrack docs/superpowers (internal)
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug fixes" },
     { message = "^perf", group = "Performance" },
