@@ -108,3 +108,17 @@ def test_fabric_and_local_and_none_use_the_default_credential(monkeypatch: pytes
 
 def test_acs_module_reexports_nothing_secret():
     assert not hasattr(acs_email, "connection_string")
+
+
+def test_default_credential_is_the_azure_default_credential(monkeypatch: pytest.MonkeyPatch):
+    import sys
+    import types
+
+    class FakeDefaultAzureCredential:
+        pass
+
+    module = types.ModuleType("azure.identity")
+    module.DefaultAzureCredential = FakeDefaultAzureCredential  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "azure.identity", module)
+
+    assert isinstance(credential._default_credential(), FakeDefaultAzureCredential)
