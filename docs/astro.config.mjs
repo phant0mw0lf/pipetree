@@ -34,7 +34,11 @@ const releaseLine = release.split('.').slice(0, 2).join('.');
 const archived = JSON.parse(fs.readFileSync(new URL('./versions.json', import.meta.url), 'utf8'));
 const versions = archived
   .filter((slug) => channel === 'next' || slug !== releaseLine)
-  .map((slug) => ({ slug, label: slug === 'next' ? 'next (unreleased)' : `v${slug}` }));
+  .map((slug) => ({
+    slug,
+    // On next builds the archive of the newest line is the latest release.
+    label: slug === 'next' ? 'next (unreleased)' : slug === releaseLine ? `v${slug} (latest)` : `v${slug}`,
+  }));
 const versioned = versions.length > 0;
 
 export default defineConfig({
