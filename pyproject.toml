@@ -1,6 +1,6 @@
 [project]
 name = "pipetree-meta"
-version = "0.1.0"
+version = "0.1.1"
 description = "Metadata-driven pipeline orchestration: YAML in, a runnable dependency tree out."
 readme = "README.md"
 license = "MIT"

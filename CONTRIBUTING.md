@@ -154,6 +154,10 @@ patch version. The changelog is generated with
    uvx git-cliff --bump -o CHANGELOG.md
    ```
 
+   The CLI reference page carries the version, so also run
+   `uv run python docs/scripts/gen_reference.py` and commit the result (a test
+   fails otherwise).
+
    Edit `CHANGELOG.md` by hand where a commit message reads badly for users.
 3. Open a PR titled `chore(release): ...` (git-cliff leaves such commits out of the
    changelog) and merge it once checks pass. Merge it last: whatever lands on `main`
