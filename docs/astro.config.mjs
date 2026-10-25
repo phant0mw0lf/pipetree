@@ -11,8 +11,9 @@ const site = process.env.SITE_URL || 'https://pipetree.dev';
 const base = process.env.BASE_PATH || '/';
 
 // Which docs this build is (see docs/README.md, "Versions"):
-// - `release`: the branch docs-live, the docs of the newest release. Production, pipetree.dev.
-// - `next`: everything else (main, pull request previews, local builds), unreleased.
+// - `release`: the branch docs-live, production (pipetree.dev): the newest release at the root,
+//   main's unreleased docs under /next/.
+// - `next`: everything else (main, pull request previews, local builds): unreleased docs at the root.
 // Cloudflare Workers Builds sets WORKERS_CI_BRANCH; DOCS_CHANNEL overrides it for a local check.
 const channel =
   process.env.DOCS_CHANNEL || (process.env.WORKERS_CI_BRANCH === 'docs-live' ? 'release' : 'next');
@@ -26,12 +27,14 @@ const release = cliPage.match(/\(pipetree ([0-9][^)]*)\)/)?.[1];
 if (!release) throw new Error('reference/cli.mdx does not name the pipetree version');
 const releaseLine = release.split('.').slice(0, 2).join('.');
 
-// Archived minor lines, newest first, each a folder in src/content/docs/ (docs/scripts/archive_docs.py).
-// The release site shows the newest line at the root; docs-live leaves its folder out.
+// Versions besides the root pages, each a folder in src/content/docs/: the archived minor lines,
+// newest first (docs/scripts/archive_docs.py). The release site also has `next`, the unreleased
+// docs of main, and leaves out the archive of its own line, which it shows at the root
+// (docs/scripts/build_release_site.py).
 const archived = JSON.parse(fs.readFileSync(new URL('./versions.json', import.meta.url), 'utf8'));
 const versions = archived
   .filter((slug) => channel === 'next' || slug !== releaseLine)
-  .map((slug) => ({ slug, label: `v${slug}` }));
+  .map((slug) => ({ slug, label: slug === 'next' ? 'next (unreleased)' : `v${slug}` }));
 const versioned = versions.length > 0;
 
 export default defineConfig({

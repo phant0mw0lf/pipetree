@@ -191,9 +191,9 @@ patch version. The changelog is generated with
    author ("by @user", from the GitHub API: the release job gives git-cliff the
    token).
 
-   Last, the workflow points the docs site at the new tag (branch `docs-live`, see
-   `docs/README.md`, "Versions"). `pipetree.dev` changes only for the newest final
-   version, after the PyPI upload.
+   Last, the workflow rebuilds the docs site (branch `docs-live`, see
+   `docs/README.md`, "Versions"): the root pages of `pipetree.dev` follow the newest
+   final version, after the PyPI upload.
 
 **Pre-releases.** A tag with `a`, `b` or `rc` after the number (`v0.2.0rc1`, the
 version in `pyproject.toml` and `__version__` must be the same PEP 440 string
@@ -221,8 +221,8 @@ PyPI files are immutable anyway. A mistake in the files is fixed with a new vers
   workflow runs.
 - Settings, Code security: enable private vulnerability reporting, secret
   scanning, and push protection.
-- Docs site: run the `docs-live` workflow once with the latest release tag as
-  `ref` (it creates the branch `docs-live`), then set the production branch of the
+- Docs site: run the `docs-live` workflow once by hand (Actions, `docs-live`, Run
+  workflow); it creates the branch `docs-live`. Then set the production branch of the
   Cloudflare project to `docs-live` (Workers & Pages, `pipetree`, Settings, Build,
-  Branch control). Keep builds for non-production branches on, so `main` and pull
-  requests still get previews.
+  Branch control). Keep builds for non-production branches on, so pull requests
+  still get previews.

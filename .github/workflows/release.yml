@@ -163,11 +163,8 @@ jobs:
   docs:
     name: Point the docs site at the release
     needs: github-release
-    # Only the newest final version moves the site: a pre-release or a patch for
-    # an older line leaves it where it is.
+    # Rebuilds docs-live from the newest release tag; a pre-release or a patch for an
+    # older line leaves the root pages as they are.
     permissions:
-      contents: write # docs-live.yml moves the docs-live branch
+      contents: write # docs-live.yml pushes the docs-live branch
     uses: $/.github/workflows/docs-live.yml
-    with:
-      ref: ${{ github.ref_name }}
-      only-if-newest: true
