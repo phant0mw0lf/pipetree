@@ -1,6 +1,6 @@
 name: docs
 
-# Build check for the documentation site (docs/). Cloudflare Pages builds and
+# Build check for the documentation site (docs/). Cloudflare builds and
 # deploys the site itself; this job only makes sure a change still builds and
 # that every internal link is valid.
 
@@ -49,3 +49,13 @@ jobs:
       - name: Build (checks internal links)
         working-directory: docs
         run: npm run build
+
+      # The release site (branch docs-live, see docs/README.md, "Versions") is built
+      # without the archive of the newest line, which it shows at the root.
+      - name: Build as the release site
+        working-directory: docs
+        run: |
+          set -eu
+          line="$(sed -n 's/.*(pipetree \([0-9][^)]*\)).*/\1/p' src/content/docs/reference/cli.mdx | sed -n '1p' | cut -d. -f1-2)"
+          rm -rf "src/content/docs/$line" "src/content/versions/$line.json" "src/assets/$line"
+          DOCS_CHANNEL=release npm run build

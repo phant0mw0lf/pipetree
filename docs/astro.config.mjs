@@ -3,10 +3,36 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { pluginLanguageBadge } from 'expressive-code-language-badge';
 import starlightLinksValidator from 'starlight-links-validator';
+import starlightVersions from 'starlight-versions';
+import fs from 'node:fs';
 
-// Hosted on Cloudflare Pages at https://pipetree.dev, at the root (see docs/README.md).
+// Hosted on Cloudflare at https://pipetree.dev, at the root, built from the branch docs-live (see docs/README.md).
 const site = process.env.SITE_URL || 'https://pipetree.dev';
 const base = process.env.BASE_PATH || '/';
+
+// Which docs this build is (see docs/README.md, "Versions"):
+// - `release`: the branch docs-live, the docs of the newest release. Production, pipetree.dev.
+// - `next`: everything else (main, pull request previews, local builds), unreleased.
+// Cloudflare Workers Builds sets WORKERS_CI_BRANCH; DOCS_CHANNEL overrides it for a local check.
+const channel =
+  process.env.DOCS_CHANNEL || (process.env.WORKERS_CI_BRANCH === 'docs-live' ? 'release' : 'next');
+if (channel !== 'release' && channel !== 'next') {
+  throw new Error(`DOCS_CHANNEL must be "release" or "next", not "${channel}"`);
+}
+
+// The released version: the generated CLI reference carries it (docs/scripts/gen_reference.py).
+const cliPage = fs.readFileSync(new URL('./src/content/docs/reference/cli.mdx', import.meta.url), 'utf8');
+const release = cliPage.match(/\(pipetree ([0-9][^)]*)\)/)?.[1];
+if (!release) throw new Error('reference/cli.mdx does not name the pipetree version');
+const releaseLine = release.split('.').slice(0, 2).join('.');
+
+// Archived minor lines, newest first, each a folder in src/content/docs/ (docs/scripts/archive_docs.py).
+// The release site shows the newest line at the root; docs-live leaves its folder out.
+const archived = JSON.parse(fs.readFileSync(new URL('./versions.json', import.meta.url), 'utf8'));
+const versions = archived
+  .filter((slug) => channel === 'next' || slug !== releaseLine)
+  .map((slug) => ({ slug, label: `v${slug}` }));
+const versioned = versions.length > 0;
 
 export default defineConfig({
   site,
@@ -45,7 +71,22 @@ export default defineConfig({
           },
         },
       },
-      plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
+      // starlight-versions renders the version select and the notices; it needs at least one
+      // archived version.
+      components: channel === 'next' && versioned ? { Banner: './src/components/NextBanner.astro' } : {},
+      plugins: [
+        ...(versioned
+          ? [
+              starlightVersions({
+                current: { label: channel === 'release' ? `v${release} (latest)` : 'next (unreleased)' },
+                versions,
+                // Not tied to a version: always the newest text, and not archived.
+                exclude: ['about/**'],
+              }),
+            ]
+          : []),
+        starlightLinksValidator({ errorOnRelativeLinks: false }),
+      ],
       sidebar: [
         { label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },

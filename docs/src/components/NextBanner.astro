@@ -1,0 +1,39 @@
+---
+// Banner for the `next` docs (main, pull request previews, local builds): the
+// pages at the root describe unreleased changes. Archived versions get the
+// notice of starlight-versions instead. astro.config.mjs uses this component
+// only for `next`; it also renders what the plugin's own Banner override would,
+// so the plugin's build warning about an existing Banner override is expected.
+import Default from '@astrojs/starlight/components/Banner.astro';
+import VersionBanner from 'starlight-versions/components/VersionBanner.astro';
+import archived from '../../versions.json';
+
+const firstSegment = Astro.locals.starlightRoute.id.split('/')[0];
+const isNext = !archived.includes(firstSegment);
+---
+
+{
+  isNext && (
+    <div class="next-banner" data-pagefind-ignore>
+      These pages describe the next, unreleased version of pipetree. For the version you can
+      install, see <a href="https://pipetree.dev/">pipetree.dev</a>.
+    </div>
+  )
+}
+<VersionBanner />
+<Default><slot /></Default>
+
+<style>
+  .next-banner {
+    padding: var(--sl-nav-pad-y) var(--sl-nav-pad-x);
+    background-color: var(--sl-color-orange-low);
+    color: var(--sl-color-orange-high);
+    border-bottom: 1px solid var(--sl-color-orange);
+    line-height: var(--sl-line-height-headings);
+    text-align: center;
+    text-wrap: balance;
+  }
+  .next-banner a {
+    color: var(--sl-color-orange-high);
+  }
+</style>

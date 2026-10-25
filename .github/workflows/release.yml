@@ -159,3 +159,15 @@ jobs:
           fi
           # shellcheck disable=SC2086 - the flags are two fixed words
           gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file RELEASE_NOTES.md $flags
+
+  docs:
+    name: Point the docs site at the release
+    needs: github-release
+    # Only the newest final version moves the site: a pre-release or a patch for
+    # an older line leaves it where it is.
+    permissions:
+      contents: write # docs-live.yml moves the docs-live branch
+    uses: $/.github/workflows/docs-live.yml
+    with:
+      ref: ${{ github.ref_name }}
+      only-if-newest: true
