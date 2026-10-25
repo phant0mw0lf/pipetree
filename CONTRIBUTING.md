@@ -159,6 +159,13 @@ patch version. The changelog is generated with
    fails otherwise).
 
    Edit `CHANGELOG.md` by hand where a commit message reads badly for users.
+
+   Then archive the docs of this version for the version select on the site (needs
+   `npm ci` in `docs/`; see `docs/README.md`, "Versions"):
+
+   ```bash
+   uv run python docs/scripts/archive_docs.py
+   ```
 3. Open a PR titled `chore(release): ...` (git-cliff leaves such commits out of the
    changelog) and merge it once checks pass. Merge it last: whatever lands on `main`
    afterwards is missing from `CHANGELOG.md`, while the release notes (generated from
@@ -183,6 +190,10 @@ patch version. The changelog is generated with
    Every entry of the notes and of `CHANGELOG.md` carries its pull request and its
    author ("by @user", from the GitHub API: the release job gives git-cliff the
    token).
+
+   Last, the workflow rebuilds the docs site (branch `docs-live`, see
+   `docs/README.md`, "Versions"): the root pages of `pipetree.dev` follow the newest
+   final version, after the PyPI upload.
 
 **Pre-releases.** A tag with `a`, `b` or `rc` after the number (`v0.2.0rc1`, the
 version in `pyproject.toml` and `__version__` must be the same PEP 440 string
@@ -210,3 +221,8 @@ PyPI files are immutable anyway. A mistake in the files is fixed with a new vers
   workflow runs.
 - Settings, Code security: enable private vulnerability reporting, secret
   scanning, and push protection.
+- Docs site: run the `docs-live` workflow once by hand (Actions, `docs-live`, Run
+  workflow); it creates the branch `docs-live`. Then set the production branch of the
+  Cloudflare project to `docs-live` (Workers & Pages, `pipetree`, Settings, Build,
+  Branch control). Keep builds for non-production branches on, so pull requests
+  still get previews.

@@ -38,7 +38,7 @@ Settings when creating the project (Workers & Pages, Create, Import a repository
 | --- | --- |
 | Repository | `phant0mw0lf/pipetree` |
 | Project name | `pipetree` (must equal `name` in `wrangler.jsonc`) |
-| Production branch | `main` |
+| Production branch | `docs-live` (see "Versions"; `main` then builds as a preview) |
 | Root directory | `docs` |
 | Build command | `npm ci && npm run build` |
 | Deploy command | `npx wrangler deploy` |
@@ -51,6 +51,43 @@ Settings when creating the project (Workers & Pages, Create, Import a repository
 The Cloudflare build runs Node only, with no Python. That works because the generated reference files and `public/pipetree.schema.json` are committed.
 
 `public/_headers` sets the security headers. The Content-Security-Policy allows inline scripts and styles (Starlight needs them) and `wasm-unsafe-eval` (search).
+
+## Versions
+
+`pipetree.dev` documents the newest release at the regular URLs, so every link without a version shows the latest docs. The other versions sit in folders, picked with the version select ([starlight-versions](https://starlight-versions.vercel.app/)):
+
+| URL | Content | Select label |
+| --- | --- | --- |
+| `pipetree.dev/...` | the newest release | `vX.Y.Z (latest)` |
+| `pipetree.dev/next/...` | `main`, unreleased; not indexed by search engines | `next (unreleased)` |
+| `pipetree.dev/0.1/...` | an archived minor line, one per line | `v0.1` |
+
+A minor version is where pipetree breaks configs (0.x), so one entry per minor line is enough. Each version also has its schema, for example `pipetree.dev/0.1/pipetree.schema.json`.
+
+**Write docs in the feature branch.** The pages at the root of `src/content/docs/` describe `main`, so a feature pull request changes them along with the code. Its Cloudflare preview shows them at the root with a banner saying they are unreleased. After the merge they appear under `/next/`. Do not edit the archive folders, except to fix an error in an old version.
+
+**Archives are made in the release pull request.** After the version bump and `gen_reference.py`:
+
+```bash
+uv run python docs/scripts/archive_docs.py
+```
+
+It snapshots the root pages as the archive of the version's minor line (0.2 for 0.2.3) and replaces an older archive of the same line, so a patch release refreshes it. `tests/test_docs_versions.py` fails when the newest archive does not match the version in the code.
+
+**The production site is assembled.** The plugin always puts the pages of the build itself at the root, so the site Cloudflare builds as production is put together first, on the branch `docs-live`, by `docs/scripts/build_release_site.py`:
+
+- the root pages, their images and `/pipetree.schema.json` come from the newest release tag (`vX.Y.Z`),
+- `next/` is a snapshot of the root pages of `main`,
+- everything else (config, components, archives) comes from `main`, without the archive of the release's own line, which is at the root.
+
+`.github/workflows/docs-live.yml` runs the script and commits the result to `docs-live`. It runs after every docs change on `main`, after every release (the `Release` workflow calls it), and by hand. Only that workflow writes `docs-live`. Its commits hold the assembled `docs/` directory and nothing else; leaving `.github/` out keeps the push within what the workflow token may do. A fix to the docs of the latest release therefore goes live with the next release, and at once under `/next/`.
+
+The `docs-build` check builds both: the pull request as it is, and the release site assembled from it. To assemble and build the release site locally (needs the tags):
+
+```bash
+python3 docs/scripts/build_release_site.py /tmp/site
+cd /tmp/site/docs && npm ci && DOCS_CHANNEL=release npm run build
+```
 
 ## Another domain or a sub-path
 
