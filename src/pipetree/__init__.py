@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pipetree.runlog.notifier import Notifier
     from pipetree.runlog.writer import RunLogWriter
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = ["__version__", "run_pipeline"]
 

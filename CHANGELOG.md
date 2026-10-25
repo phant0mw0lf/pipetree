@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-21
+
+### Bug fixes
+
+- **spark:** create a schema only when the catalog does not have it ([#77](https://github.com/phant0mw0lf/pipetree/pull/77)) by @phant0mw0lf
+- **spark:** compare MAP columns through sorted entries in change detection ([#78](https://github.com/phant0mw0lf/pipetree/pull/78)) by @phant0mw0lf
+- **executor:** a failing cleanup before an append retry fails the table, not the run ([#75](https://github.com/phant0mw0lf/pipetree/pull/75)) by @phant0mw0lf
+- **spark:** translate transient engine errors so the executor retries them ([#64](https://github.com/phant0mw0lf/pipetree/pull/64)) by @phant0mw0lf
+
+### CI
+
+- release notes and changelog name the author of every change ([#63](https://github.com/phant0mw0lf/pipetree/pull/63)) by @phant0mw0lf
+
+### Tests
+
+- line coverage of src/pipetree at 100%, enforced in CI ([#80](https://github.com/phant0mw0lf/pipetree/pull/80)) by @phant0mw0lf
 ## [0.1.0] - 2026-10-14
 
 ### Bug fixes
