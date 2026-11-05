@@ -2,14 +2,16 @@
 // Banner for the `next` docs (main, pull request previews, local builds): the
 // pages at the root describe unreleased changes. Archived versions get the
 // notice of starlight-versions instead. astro.config.mjs uses this component
-// only for `next`; it also renders what the plugin's own Banner override would,
-// so the plugin's build warning about an existing Banner override is expected.
+// only for `next`, so the plugin's build warning about an existing Banner
+// override is expected. Splash pages (the home page) have no page title, so their
+// version notice is rendered here, as the plugin does.
 import Default from '@astrojs/starlight/components/Banner.astro';
-import VersionBanner from 'starlight-versions/components/VersionBanner.astro';
+import NextVersionNotice from './NextVersionNotice.astro';
 import archived from '../../versions.json';
 
-const firstSegment = Astro.locals.starlightRoute.id.split('/')[0];
-const isNext = !archived.includes(firstSegment);
+const { id, entry } = Astro.locals.starlightRoute;
+const isNext = !archived.includes(id.split('/')[0]);
+const isSplash = entry.data.template === 'splash';
 ---
 
 {
@@ -20,7 +22,7 @@ const isNext = !archived.includes(firstSegment);
     </div>
   )
 }
-<VersionBanner />
+{isSplash && <div class="splash-notice"><NextVersionNotice /></div>}
 <Default><slot /></Default>
 
 <style>
@@ -32,6 +34,11 @@ const isNext = !archived.includes(firstSegment);
     line-height: var(--sl-line-height-headings);
     text-align: center;
     text-wrap: balance;
+  }
+  .splash-notice {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem var(--sl-nav-pad-x) 0;
   }
   .next-banner a {
     color: var(--sl-color-orange-high);

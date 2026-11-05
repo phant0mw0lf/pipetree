@@ -1,0 +1,55 @@
+---
+// Version notice on archived pages of a `next` build (main, pull request
+// previews, local builds). There the root pages are unreleased, so the plugin's
+// notice ("switch to the latest version", linking to the root) would send
+// readers to unreleased docs. The newest archive is the latest release
+// (versions.json lists it first; tests/test_docs_versions.py enforces that).
+import { Icon } from '@astrojs/starlight/components';
+import archived from '../../versions.json';
+
+const [first, ...rest] = Astro.locals.starlightRoute.id.split('/');
+const latest = archived[0];
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const latestURL = `${base}/${[latest, ...rest].join('/')}${rest.length ? '/' : ''}`;
+---
+
+{
+  archived.includes(first) && (
+    <p class="next-version-notice">
+      <Icon name="seti:clock" size="1em" />
+      {first === latest ? (
+        <span>
+          These pages are for v{latest}, the latest release. Pages without a version in the URL
+          describe the next, unreleased version.
+        </span>
+      ) : (
+        <span>
+          This content is for v{first}. Switch to <a href={latestURL}>v{latest}, the latest
+          release</a>.
+        </span>
+      )}
+    </p>
+  )
+}
+
+<style>
+  .next-version-notice {
+    display: flex;
+    border: 1px solid var(--sl-color-orange);
+    padding: 0.75em 1em;
+    background-color: var(--sl-color-orange-low);
+    color: var(--sl-color-orange-high);
+    width: max-content;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.75em;
+    font-size: var(--sl-text-sm);
+    line-height: var(--sl-line-height-headings);
+  }
+  .next-version-notice a {
+    color: var(--sl-color-orange-high);
+  }
+  .next-version-notice :global(svg) {
+    flex-shrink: 0;
+  }
+</style>

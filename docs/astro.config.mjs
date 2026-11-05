@@ -6,20 +6,11 @@ import starlightLinksValidator from 'starlight-links-validator';
 import starlightVersions from 'starlight-versions';
 import fs from 'node:fs';
 
+import { channel } from './channel.mjs';
+
 // Hosted on Cloudflare at https://pipetree.dev, at the root, built from the branch docs-live (see docs/README.md).
 const site = process.env.SITE_URL || 'https://pipetree.dev';
 const base = process.env.BASE_PATH || '/';
-
-// Which docs this build is (see docs/README.md, "Versions"):
-// - `release`: the branch docs-live, production (pipetree.dev): the newest release at the root,
-//   main's unreleased docs under /next/.
-// - `next`: everything else (main, pull request previews, local builds): unreleased docs at the root.
-// Cloudflare Workers Builds sets WORKERS_CI_BRANCH; DOCS_CHANNEL overrides it for a local check.
-const channel =
-  process.env.DOCS_CHANNEL || (process.env.WORKERS_CI_BRANCH === 'docs-live' ? 'release' : 'next');
-if (channel !== 'release' && channel !== 'next') {
-  throw new Error(`DOCS_CHANNEL must be "release" or "next", not "${channel}"`);
-}
 
 // The released version: the generated CLI reference carries it (docs/scripts/gen_reference.py).
 const cliPage = fs.readFileSync(new URL('./src/content/docs/reference/cli.mdx', import.meta.url), 'utf8');
@@ -80,7 +71,10 @@ export default defineConfig({
       },
       // starlight-versions renders the version select and the notices; it needs at least one
       // archived version.
-      components: channel === 'next' && versioned ? { Banner: './src/components/NextBanner.astro' } : {},
+      components:
+        channel === 'next' && versioned
+          ? { Banner: './src/components/NextBanner.astro', PageTitle: './src/components/NextPageTitle.astro' }
+          : {},
       plugins: [
         ...(versioned
           ? [
