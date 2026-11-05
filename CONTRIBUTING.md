@@ -221,8 +221,9 @@ PyPI files are immutable anyway. A mistake in the files is fixed with a new vers
   workflow runs.
 - Settings, Code security: enable private vulnerability reporting, secret
   scanning, and push protection.
-- Docs site: run the `docs-live` workflow once by hand (Actions, `docs-live`, Run
-  workflow); it creates the branch `docs-live`. Then set the production branch of the
+- Docs site: the branch `docs-live` is created by the `docs-live` workflow, which runs on
+  its own after the first docs change on `main` (run it by hand from the Actions tab only
+  if that run failed). Then set the production branch of the
   Cloudflare project to `docs-live` (Workers & Pages, `pipetree`, Settings, Build,
   Branch control). Keep builds for non-production branches on, so pull requests
   still get previews.

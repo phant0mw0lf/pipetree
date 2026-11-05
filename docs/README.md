@@ -80,7 +80,7 @@ It snapshots the root pages as the archive of the version's minor line (0.2 for 
 - `next/` is a snapshot of the root pages of `main`,
 - everything else (config, components, archives) comes from `main`, without the archive of the release's own line, which is at the root.
 
-`.github/workflows/docs-live.yml` runs the script and commits the result to `docs-live`. It runs after every docs change on `main`, after every release (the `Release` workflow calls it), and by hand. Only that workflow writes `docs-live`. Its commits hold the assembled `docs/` directory and nothing else; leaving `.github/` out keeps the push within what the workflow token may do. A fix to the docs of the latest release therefore goes live with the next release, and at once under `/next/`.
+`.github/workflows/docs-live.yml` runs the script and commits the result to `docs-live`. It runs after every docs change on `main`, after every release (the `Release` workflow calls it), and by hand. The first run, which creates the branch, is the merge that introduced it. Only that workflow writes `docs-live`. Its commits hold the assembled `docs/` directory and nothing else; leaving `.github/` out keeps the push within what the workflow token may do. A fix to the docs of the latest release therefore goes live with the next release, and at once under `/next/`.
 
 The `docs-build` check builds both: the pull request as it is, and the release site assembled from it. To assemble and build the release site locally (needs the tags):
 
