@@ -1,0 +1,68 @@
+{
+  "sidebar": [
+    {
+      "label": "Getting started",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "getting-started"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Concepts",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "concepts"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Merge strategies",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "merge"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Guides",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "guides"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Reference",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "reference"
+          }
+        }
+      ]
+    },
+    {
+      "label": "About",
+      "items": [
+        {
+          "autogenerate": {
+            "directory": "about"
+          }
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    "about/architecture",
+    "about/compared-to"
+  ]
+}

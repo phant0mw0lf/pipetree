@@ -1,0 +1,46 @@
+---
+// Banner for the `next` docs (main, pull request previews, local builds): the
+// pages at the root describe unreleased changes. Archived versions get the
+// notice of starlight-versions instead. astro.config.mjs uses this component
+// only for `next`, so the plugin's build warning about an existing Banner
+// override is expected. Splash pages (the home page) have no page title, so their
+// version notice is rendered here, as the plugin does.
+import Default from '@astrojs/starlight/components/Banner.astro';
+import NextVersionNotice from './NextVersionNotice.astro';
+import archived from '../../versions.json';
+
+const { id, entry } = Astro.locals.starlightRoute;
+const isNext = !archived.includes(id.split('/')[0]);
+const isSplash = entry.data.template === 'splash';
+---
+
+{
+  isNext && (
+    <div class="next-banner" data-pagefind-ignore>
+      These pages describe the next, unreleased version of pipetree. For the version you can
+      install, see <a href="https://pipetree.dev/">pipetree.dev</a>.
+    </div>
+  )
+}
+{isSplash && <div class="splash-notice"><NextVersionNotice /></div>}
+<Default><slot /></Default>
+
+<style>
+  .next-banner {
+    padding: var(--sl-nav-pad-y) var(--sl-nav-pad-x);
+    background-color: var(--sl-color-orange-low);
+    color: var(--sl-color-orange-high);
+    border-bottom: 1px solid var(--sl-color-orange);
+    line-height: var(--sl-line-height-headings);
+    text-align: center;
+    text-wrap: balance;
+  }
+  .splash-notice {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem var(--sl-nav-pad-x) 0;
+  }
+  .next-banner a {
+    color: var(--sl-color-orange-high);
+  }
+</style>
