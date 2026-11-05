@@ -1,0 +1,10 @@
+---
+// Page title of a `next` build: Starlight's title with NextVersionNotice in place
+// of the plugin's notice (astro.config.mjs uses it only for `next`, so the
+// plugin's build warning about an existing PageTitle override is expected).
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import NextVersionNotice from './NextVersionNotice.astro';
+---
+
+<Default><slot /></Default>
+<NextVersionNotice />

@@ -1,6 +1,6 @@
 name: docs
 
-# Build check for the documentation site (docs/). Cloudflare Pages builds and
+# Build check for the documentation site (docs/). Cloudflare builds and
 # deploys the site itself; this job only makes sure a change still builds and
 # that every internal link is valid.
 
@@ -34,6 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # the release tags, for the release site build
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -49,3 +50,13 @@ jobs:
       - name: Build (checks internal links)
         working-directory: docs
         run: npm run build
+
+      # The release site (branch docs-live, see docs/README.md, "Versions"): the newest
+      # release at the root, this change under /next/.
+      - name: Build as the release site
+        run: |
+          set -eu
+          python3 docs/scripts/build_release_site.py "$RUNNER_TEMP/site"
+          cd "$RUNNER_TEMP/site/docs"
+          npm ci --no-audit --no-fund
+          DOCS_CHANNEL=release npm run build

@@ -1,0 +1,86 @@
+name: docs-live
+
+# Builds the content of the production docs site (pipetree.dev) and writes it to
+# the branch `docs-live`, which Cloudflare builds as production (see
+# docs/README.md, "Versions"):
+#
+# - the root pages are the newest release, so links without a version always
+#   show the latest docs,
+# - /next/ is main's unreleased docs, /<line>/ the archived minor lines.
+#
+# docs/scripts/build_release_site.py assembles it. Each commit on docs-live holds
+# only that docs/ directory: leaving `.github/` out keeps the push within what
+# GITHUB_TOKEN may do (GitHub refuses a token push that changes workflow files).
+#
+# Runs after a docs change on main (refreshes /next/), after each release
+# (called by release.yml), and by hand.
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**"]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-live
+  cancel-in-progress: false
+
+jobs:
+  docs-live:
+    name: Update docs-live
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the docs-live branch
+    steps:
+      # Always main (a release run starts from its tag): the assembler takes the
+      # root pages from the newest tag and everything else from main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0 # the release tags and docs-live
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: docs/.nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Assemble the site
+        run: python3 docs/scripts/build_release_site.py "$RUNNER_TEMP/site"
+
+      - name: Commit and push docs-live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          site="$RUNNER_TEMP/site"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/docs-live.index"
+          git --work-tree="$site" add --all --force docs
+          tree="$(git write-tree)"
+          unset GIT_INDEX_FILE
+
+          parent="$(git rev-parse --quiet --verify refs/remotes/origin/docs-live || true)"
+          if [ -n "$parent" ] && [ "$(git rev-parse "$parent^{tree}")" = "$tree" ]; then
+            echo "docs-live is up to date"
+            exit 0
+          fi
+          latest="$(sed -n 's/.*(pipetree \([0-9][^)]*\)).*/\1/p' "$site/docs/src/content/docs/reference/cli.mdx" | sed -n '1p')"
+          message="docs: pipetree.dev shows v$latest, next from main $(git rev-parse --short HEAD)"
+          if [ -n "$parent" ]; then
+            commit="$(git commit-tree "$tree" -p "$parent" -m "$message")"
+          else
+            commit="$(git commit-tree "$tree" -m "$message")"
+          fi
+          # A fast-forward: the new commit's parent is the current tip.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$commit:refs/heads/docs-live"
+          echo "docs-live is now $commit: v$latest at the root, next from $(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"

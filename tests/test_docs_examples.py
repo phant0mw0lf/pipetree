@@ -1,11 +1,13 @@
 """Complete YAML configs in the docs must pass the config loader.
 
 A fenced block marked ```yaml validate is a complete config; plain ```yaml blocks are
-fragments and are not checked.
+fragments and are not checked. Archived versions (docs/versions.json) are skipped: their
+examples were checked when they were current and may use fields a later version removed.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -14,13 +16,17 @@ import pytest
 from pipetree.config.loader import load_config
 from pipetree.model import PipelineConfig
 
-PAGES = Path(__file__).resolve().parent.parent / "docs" / "src" / "content" / "docs"
+DOCS = Path(__file__).resolve().parent.parent / "docs"
+PAGES = DOCS / "src" / "content" / "docs"
+ARCHIVED = set(json.loads((DOCS / "versions.json").read_text()))
 _BLOCK = re.compile(r"^```yaml validate[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
 
 def _blocks() -> list[tuple[str, int, str]]:
     found = []
     for page in sorted(PAGES.rglob("*.md*")):
+        if page.relative_to(PAGES).parts[0] in ARCHIVED:
+            continue
         text = page.read_text()
         for i, match in enumerate(_BLOCK.finditer(text), start=1):
             found.append((str(page.relative_to(PAGES)), i, match.group(1)))
