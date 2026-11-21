@@ -9,8 +9,8 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/starlight": "0.42.8",
-    "astro": "7.4.4",
+    "@astrojs/starlight": "0.43.1",
+    "astro": "7.4.12",
     "expressive-code-language-badge": "2.0.0",
     "starlight-links-validator": "0.27.0",
     "starlight-versions": "0.10.2"
